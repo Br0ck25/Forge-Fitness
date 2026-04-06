@@ -201,7 +201,7 @@ export function MealsPage({ settings }: MealsPageProps) {
     })
   }
 
-  const handleLoadEditor = (food: Food | FoodDraft, sourceLabel = 'food') => {
+  const handleLoadEditor = (food: Food | FoodDraft) => {
     setEditor(toEditorState(food))
     setFeedback({
       type: 'success',
@@ -392,7 +392,7 @@ export function MealsPage({ settings }: MealsPageProps) {
                     <button
                       type="button"
                       className="button button-secondary"
-                      onClick={() => handleLoadEditor(food, 'search result')}
+                      onClick={() => handleLoadEditor(food)}
                     >
                       Load into editor
                     </button>
@@ -728,7 +728,7 @@ export function MealsPage({ settings }: MealsPageProps) {
                     <button
                       type="button"
                       className="button button-secondary"
-                      onClick={() => handleLoadEditor(food, 'pantry item')}
+                      onClick={() => handleLoadEditor(food)}
                     >
                       Edit
                     </button>

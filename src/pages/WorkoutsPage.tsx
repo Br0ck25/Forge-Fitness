@@ -4,6 +4,7 @@ import {
   BookmarkPlus,
   Clock3,
   Dumbbell,
+  Flame,
   Plus,
   Trash2,
   Trophy,
@@ -17,12 +18,25 @@ import {
   saveWorkoutSession,
   saveWorkoutTemplate,
 } from '../lib/db'
-import { calculateWorkoutVolume, formatDateTime } from '../lib/utils'
+import {
+  calculateWorkoutCaloriesBurned,
+  getReferenceWeightKg,
+  WORKOUT_INTENSITY_OPTIONS,
+  WORKOUT_SESSION_TYPE_OPTIONS,
+} from '../lib/targets'
+import {
+  calculateWorkoutVolume,
+  formatDateTime,
+  formatWeight,
+  roundValue,
+} from '../lib/utils'
 import type {
   AppSettings,
   ExerciseType,
   LoggedExercise,
   WorkoutExerciseTemplate,
+  WorkoutIntensity,
+  WorkoutSessionType,
   WorkoutTemplate,
 } from '../types'
 
@@ -70,6 +84,15 @@ const fromTemplateExercise = (exercise: WorkoutExerciseTemplate): ExerciseEditor
   note: exercise.note ?? '',
 })
 
+const getSessionTypeLabel = (sessionType?: WorkoutSessionType) =>
+  WORKOUT_SESSION_TYPE_OPTIONS.find((option) => option.id === sessionType)?.label ?? 'Mixed'
+
+const getIntensityLabel = (intensity?: WorkoutIntensity) =>
+  WORKOUT_INTENSITY_OPTIONS.find((option) => option.id === intensity)?.label ?? 'Moderate'
+
+const formatProgramSummary = (values: Array<string | undefined>) =>
+  values.filter((value): value is string => Boolean(value?.trim())).join(' • ')
+
 export function WorkoutsPage({ settings }: WorkoutsPageProps) {
   const templates = useLiveQuery(
     () => db.workoutTemplates.orderBy('updatedAt').reverse().toArray(),
@@ -81,13 +104,24 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
     [],
     [],
   )
+  const latestWeight = useLiveQuery(
+    () => db.weightEntries.orderBy('date').last(),
+    [],
+    undefined,
+  )
 
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
   const [sessionName, setSessionName] = useState('')
   const [sessionFocus, setSessionFocus] = useState('Strength')
+  const [programName, setProgramName] = useState('')
+  const [phaseName, setPhaseName] = useState('')
+  const [dayLabel, setDayLabel] = useState('')
+  const [sessionType, setSessionType] = useState<WorkoutSessionType>('mixed')
+  const [intensity, setIntensity] = useState<WorkoutIntensity>('moderate')
   const [occurredAt, setOccurredAt] = useState(() => new Date().toISOString().slice(0, 16))
   const [durationMinutes, setDurationMinutes] = useState('45')
   const [energyLevel, setEnergyLevel] = useState('3')
+  const [calorieOverride, setCalorieOverride] = useState('')
   const [note, setNote] = useState('')
   const [exerciseRows, setExerciseRows] = useState<ExerciseEditor[]>([createExerciseEditor()])
   const [feedback, setFeedback] = useState<{
@@ -96,6 +130,32 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
   } | null>(null)
 
   const weekStartsOn = settings.weekStartsOn === 'monday' ? 1 : 0
+  const referenceWeightKg = getReferenceWeightKg(settings, latestWeight?.weightKg)
+  const parsedCalorieOverride = calorieOverride.trim()
+    ? Math.max(0, Number(calorieOverride) || 0)
+    : undefined
+
+  const exerciseDurationMinutes = useMemo(
+    () =>
+      exerciseRows.reduce(
+        (total, exercise) =>
+          total + (exercise.durationMinutes ? Number(exercise.durationMinutes) || 0 : 0),
+        0,
+      ),
+    [exerciseRows],
+  )
+
+  const effectiveDurationMinutes = Math.max(
+    1,
+    Number(durationMinutes) || exerciseDurationMinutes || 30,
+  )
+  const estimatedCaloriesBurned = calculateWorkoutCaloriesBurned(
+    effectiveDurationMinutes,
+    referenceWeightKg,
+    sessionType,
+    intensity,
+  )
+  const displayedCaloriesBurned = parsedCalorieOverride ?? estimatedCaloriesBurned
 
   const sessionsThisWeek = useMemo(() => {
     const intervalStart = startOfWeek(new Date(), { weekStartsOn })
@@ -110,6 +170,23 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
   const totalVolumeThisWeek = useMemo(
     () => sessionsThisWeek.reduce((total, session) => total + session.totalVolumeKg, 0),
     [sessionsThisWeek],
+  )
+
+  const weeklyCaloriesBurned = useMemo(
+    () =>
+      sessionsThisWeek.reduce(
+        (total, session) =>
+          total +
+          (session.caloriesBurned ??
+            calculateWorkoutCaloriesBurned(
+              session.durationMinutes,
+              referenceWeightKg,
+              session.sessionType ?? 'mixed',
+              session.intensity ?? 'moderate',
+            )),
+        0,
+      ),
+    [referenceWeightKg, sessionsThisWeek],
   )
 
   const heaviestExercise = useMemo(() => {
@@ -130,9 +207,15 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
     setSelectedTemplateId('')
     setSessionName('')
     setSessionFocus('Strength')
+    setProgramName('')
+    setPhaseName('')
+    setDayLabel('')
+    setSessionType('mixed')
+    setIntensity('moderate')
     setOccurredAt(new Date().toISOString().slice(0, 16))
     setDurationMinutes('45')
     setEnergyLevel('3')
+    setCalorieOverride('')
     setNote('')
     setExerciseRows([createExerciseEditor()])
   }
@@ -141,6 +224,11 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
     setSelectedTemplateId(template.id)
     setSessionName(template.name)
     setSessionFocus(template.focus)
+    setProgramName(template.programName ?? '')
+    setPhaseName(template.phaseName ?? '')
+    setDayLabel(template.dayLabel ?? '')
+    setSessionType(template.sessionType ?? 'mixed')
+    setIntensity(template.intensity ?? 'moderate')
     setDurationMinutes(
       String(
         template.exercises.reduce(
@@ -149,6 +237,7 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
         ),
       ),
     )
+    setCalorieOverride('')
     setExerciseRows(template.exercises.map(fromTemplateExercise))
     setFeedback({ type: 'success', text: `Loaded template: ${template.name}.` })
   }
@@ -198,17 +287,24 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
       templateId: selectedTemplateId || undefined,
       name: sessionName,
       focus: sessionFocus,
+      programName: programName || undefined,
+      phaseName: phaseName || undefined,
+      dayLabel: dayLabel || undefined,
+      sessionType,
+      intensity,
       occurredAt: new Date(occurredAt).toISOString(),
       exercises: normalizedExercises,
-      durationMinutes:
-        Number(durationMinutes) ||
-        normalizedExercises.reduce((total, exercise) => total + (exercise.durationMinutes ?? 0), 0) ||
-        30,
+      durationMinutes: effectiveDurationMinutes,
       energyLevel: Number(energyLevel) || 3,
+      calorieOverride: parsedCalorieOverride,
+      referenceWeightKg,
       note: note || undefined,
     })
 
-    setFeedback({ type: 'success', text: `${sessionName} saved to your workout history.` })
+    setFeedback({
+      type: 'success',
+      text: `${sessionName} saved with ${displayedCaloriesBurned} estimated calories burned.`,
+    })
     resetComposer()
   }
 
@@ -227,6 +323,11 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
       id: selectedTemplateId || undefined,
       name: sessionName,
       focus: sessionFocus,
+      programName: programName || undefined,
+      phaseName: phaseName || undefined,
+      dayLabel: dayLabel || undefined,
+      sessionType,
+      intensity,
       exercises: normalizedExercises.map((exercise) => ({
         id: crypto.randomUUID(),
         name: exercise.name,
@@ -239,15 +340,18 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
       })),
     })
 
-    setFeedback({ type: 'success', text: `${sessionName} saved as a reusable template.` })
+    setFeedback({
+      type: 'success',
+      text: `${sessionName} saved as a reusable program template.`,
+    })
   }
 
   return (
     <div className="content-stack">
       <PageHeader
         kicker="Workouts"
-        title="Capture sessions that actually happened"
-        description="Use templates for repeatability, edit the details on the fly, and keep volume plus effort visible over time."
+        title="Log programs, not just random gym sessions"
+        description="Track branded programs like your own custom template: add the program name, phase, day label, duration, and workout type, then let Forge Fitness estimate calories or accept your watch number."
         actions={
           <button type="button" className="button button-ghost" onClick={resetComposer}>
             Reset composer
@@ -259,7 +363,15 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
         <article className="metric-card accent-card">
           <span className="metric-label">Sessions this week</span>
           <strong className="metric-value">{sessionsThisWeek.length}</strong>
-          <span className="metric-hint">{sessionsThisWeek.reduce((total, session) => total + session.durationMinutes, 0)} minutes logged</span>
+          <span className="metric-hint">
+            {sessionsThisWeek.reduce((total, session) => total + session.durationMinutes, 0)} minutes logged
+          </span>
+        </article>
+
+        <article className="metric-card">
+          <span className="metric-label">Calories this week</span>
+          <strong className="metric-value">{weeklyCaloriesBurned}</strong>
+          <span className="metric-hint">Estimated from type, intensity, duration, and weight</span>
         </article>
 
         <article className="metric-card">
@@ -271,7 +383,7 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
         <article className="metric-card">
           <span className="metric-label">Templates ready</span>
           <strong className="metric-value">{templates.length}</strong>
-          <span className="metric-hint">Seeded with a few starter sessions</span>
+          <span className="metric-hint">Perfect for repeatable programs and phases</span>
         </article>
 
         <article className="metric-card">
@@ -280,14 +392,18 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
             {heaviestExercise ? `${heaviestExercise.weightKg} kg` : '—'}
           </strong>
           <span className="metric-hint">
-            {heaviestExercise ? `${heaviestExercise.name} is your heaviest logged lift.` : 'Log a weighted exercise to surface your heaviest lift.'}
+            {heaviestExercise
+              ? `${heaviestExercise.name} is your heaviest logged lift.`
+              : 'Log a weighted exercise to surface your heaviest lift.'}
           </span>
         </article>
 
         <article className="metric-card">
-          <span className="metric-label">Workouts logged</span>
-          <strong className="metric-value">{sessions.length}</strong>
-          <span className="metric-hint">Momentum loves evidence.</span>
+          <span className="metric-label">Current session estimate</span>
+          <strong className="metric-value">{displayedCaloriesBurned} kcal</strong>
+          <span className="metric-hint">
+            Based on {effectiveDurationMinutes} min at {formatWeight(referenceWeightKg, settings.profile.unit)}
+          </span>
         </article>
       </div>
 
@@ -297,10 +413,18 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
         </div>
       ) : null}
 
+      <div className="notice notice-success">
+        <Flame size={18} />
+        For workouts like <strong>21 Day Fix</strong> or <strong>9 Week Control Freak</strong>, use
+        <strong> Program name</strong>, <strong>Phase / Week</strong>, and <strong>Day label</strong>,
+        then save that structure as a template. Calories are estimated from duration × body weight ×
+        workout type × intensity, and you can override the estimate if your watch or app gives you a better number.
+      </div>
+
       <div className="grid grid-two">
         <SectionCard
           title="Workout composer"
-          description="Build from scratch or load a template, then save the session or turn it into a reusable workout."
+          description="Build from scratch or load a template, then save the session or turn it into a reusable workout program."
           action={
             <div className="field">
               <label htmlFor="template-picker">Load template</label>
@@ -341,9 +465,73 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
               <input
                 id="session-focus"
                 value={sessionFocus}
-                placeholder="Strength"
+                placeholder="Strength, conditioning, recovery..."
                 onChange={(event) => setSessionFocus(event.target.value)}
               />
+            </div>
+          </div>
+
+          <div className="field-grid three-up">
+            <div className="field">
+              <label htmlFor="program-name">Program name</label>
+              <input
+                id="program-name"
+                value={programName}
+                placeholder="21 Day Fix"
+                onChange={(event) => setProgramName(event.target.value)}
+              />
+            </div>
+
+            <div className="field">
+              <label htmlFor="phase-name">Phase / week</label>
+              <input
+                id="phase-name"
+                value={phaseName}
+                placeholder="Week 2"
+                onChange={(event) => setPhaseName(event.target.value)}
+              />
+            </div>
+
+            <div className="field">
+              <label htmlFor="day-label">Day / block label</label>
+              <input
+                id="day-label"
+                value={dayLabel}
+                placeholder="Day 3 • Lower Fix"
+                onChange={(event) => setDayLabel(event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="field-grid two-up">
+            <div className="field">
+              <label htmlFor="session-type">Workout type</label>
+              <select
+                id="session-type"
+                value={sessionType}
+                onChange={(event) => setSessionType(event.target.value as WorkoutSessionType)}
+              >
+                {WORKOUT_SESSION_TYPE_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="field">
+              <label htmlFor="session-intensity">Intensity</label>
+              <select
+                id="session-intensity"
+                value={intensity}
+                onChange={(event) => setIntensity(event.target.value as WorkoutIntensity)}
+              >
+                {WORKOUT_INTENSITY_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
@@ -370,7 +558,7 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
             </div>
           </div>
 
-          <div className="field-grid two-up">
+          <div className="field-grid three-up">
             <div className="field">
               <label htmlFor="session-energy">Energy level (1-5)</label>
               <select
@@ -387,6 +575,19 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
             </div>
 
             <div className="field">
+              <label htmlFor="session-calorie-override">Calories burned override</label>
+              <input
+                id="session-calorie-override"
+                type="number"
+                min="0"
+                step="1"
+                placeholder={`Auto estimate: ${estimatedCaloriesBurned}`}
+                value={calorieOverride}
+                onChange={(event) => setCalorieOverride(event.target.value)}
+              />
+            </div>
+
+            <div className="field">
               <label htmlFor="session-note">Notes</label>
               <input
                 id="session-note"
@@ -394,6 +595,21 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
               />
+            </div>
+          </div>
+
+          <div className="summary-list compact-summary-list">
+            <div className="summary-row">
+              <span>Reference weight</span>
+              <strong>{formatWeight(referenceWeightKg, settings.profile.unit)}</strong>
+            </div>
+            <div className="summary-row">
+              <span>Estimated calories burned</span>
+              <strong>{estimatedCaloriesBurned} kcal</strong>
+            </div>
+            <div className="summary-row">
+              <span>Saved value</span>
+              <strong>{displayedCaloriesBurned} kcal</strong>
             </div>
           </div>
 
@@ -566,7 +782,7 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
         <div className="content-stack">
           <SectionCard
             title="Templates"
-            description="Use a starter workout or save your own repeatable session structures."
+            description="Great for repeatable programs, named phases, and day-specific sessions."
           >
             {templates.length > 0 ? (
               <div className="template-list">
@@ -575,7 +791,13 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
                     <div className="template-card-top">
                       <div>
                         <h3>{template.name}</h3>
-                        <p>{template.focus}</p>
+                        <p>
+                          {formatProgramSummary([
+                            template.programName,
+                            template.phaseName,
+                            template.dayLabel,
+                          ]) || template.focus}
+                        </p>
                       </div>
                       <button
                         type="button"
@@ -585,6 +807,13 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
                         Load
                       </button>
                     </div>
+
+                    <div className="stats-line">
+                      <span className="macro-pill">{getSessionTypeLabel(template.sessionType)}</span>
+                      <span className="macro-pill">{getIntensityLabel(template.intensity)}</span>
+                      <span className="macro-pill">{template.exercises.length} exercises</span>
+                    </div>
+
                     <ul>
                       {template.exercises.slice(0, 4).map((exercise) => (
                         <li key={exercise.id}>
@@ -607,7 +836,7 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
 
           <SectionCard
             title="Recent sessions"
-            description="Your workout history keeps duration, effort, and exercise details in one place."
+            description="Your workout history now keeps program labels and calorie burn with the workout details."
           >
             {sessions.length > 0 ? (
               <div className="history-list">
@@ -617,8 +846,13 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
                       <div>
                         <h3>{session.name}</h3>
                         <p>
-                          {session.focus} • {formatDateTime(session.occurredAt)}
+                          {formatProgramSummary([
+                            session.programName,
+                            session.phaseName,
+                            session.dayLabel,
+                          ]) || session.focus}
                         </p>
+                        <p>{formatDateTime(session.occurredAt)}</p>
                       </div>
                       <button
                         type="button"
@@ -635,10 +869,15 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
                       <span className="macro-pill">
                         <Clock3 size={14} /> {session.durationMinutes} min
                       </span>
-                      <span className="macro-pill">Energy {session.energyLevel}/5</span>
-                      <span className="macro-pill">Volume {session.totalVolumeKg} kg</span>
                       <span className="macro-pill">
-                        <Trophy size={14} /> {calculateWorkoutVolume(session.exercises)} kg
+                        <Flame size={14} /> {session.caloriesBurned ?? 0} kcal
+                      </span>
+                      <span className="macro-pill">{getSessionTypeLabel(session.sessionType)}</span>
+                      <span className="macro-pill">{getIntensityLabel(session.intensity)}</span>
+                      <span className="macro-pill">Energy {session.energyLevel}/5</span>
+                      <span className="macro-pill">Volume {roundValue(calculateWorkoutVolume(session.exercises), 0)} kg</span>
+                      <span className="macro-pill">
+                        <Trophy size={14} /> {session.totalVolumeKg} kg
                       </span>
                     </div>
 
@@ -658,7 +897,9 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
                 ))}
               </div>
             ) : (
-              <div className="empty-state">No workout sessions yet — save one from the composer to begin your history.</div>
+              <div className="empty-state">
+                No workout sessions yet — save one from the composer to begin your history.
+              </div>
             )}
           </SectionCard>
         </div>
