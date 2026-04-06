@@ -1,5 +1,6 @@
-import { Download, Rocket, Upload } from 'lucide-react'
+import { Download, Rocket, Target, Upload } from 'lucide-react'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { SectionCard } from '../components/SectionCard'
 import { exportBackup, importBackup } from '../lib/db'
@@ -20,8 +21,11 @@ export function SettingsPage({
   onSaveSettings,
 }: SettingsPageProps) {
   const [name, setName] = useState(settings.profile.name)
-  const [calorieTarget, setCalorieTarget] = useState(String(settings.profile.calorieTarget))
-  const [proteinTarget, setProteinTarget] = useState(String(settings.profile.proteinTarget))
+  const [startWeight, setStartWeight] = useState(
+    settings.profile.startWeightKg
+      ? String(toDisplayWeight(settings.profile.startWeightKg, settings.profile.unit))
+      : '',
+  )
   const [goalWeight, setGoalWeight] = useState(
     settings.profile.weightGoalKg
       ? String(toDisplayWeight(settings.profile.weightGoalKg, settings.profile.unit))
@@ -43,8 +47,11 @@ export function SettingsPage({
       profile: {
         ...settings.profile,
         name: name.trim(),
-        calorieTarget: Number(calorieTarget) || settings.profile.calorieTarget,
-        proteinTarget: Number(proteinTarget) || settings.profile.proteinTarget,
+        startWeightKg: startWeight
+          ? unit === 'lb'
+            ? Number(startWeight) / 2.2046226218
+            : Number(startWeight)
+          : undefined,
         weightGoalKg: goalWeight
           ? unit === 'lb'
             ? Number(goalWeight) / 2.2046226218
@@ -117,8 +124,8 @@ export function SettingsPage({
 
       <div className="settings-grid">
         <SectionCard
-          title="Profile & targets"
-          description="These settings drive the dashboard copy, meal targets, and preferred weight display."
+          title="Profile & preferences"
+          description="These settings drive the dashboard copy, weight displays, and overall app feel."
         >
           <div className="field-grid two-up">
             <div className="field">
@@ -146,29 +153,17 @@ export function SettingsPage({
 
           <div className="field-grid two-up">
             <div className="field">
-              <label htmlFor="settings-calories">Daily calories</label>
+              <label htmlFor="settings-start-weight">Start weight ({unit})</label>
               <input
-                id="settings-calories"
+                id="settings-start-weight"
                 type="number"
-                step="50"
-                value={calorieTarget}
-                onChange={(event) => setCalorieTarget(event.target.value)}
+                step="0.1"
+                placeholder="Optional"
+                value={startWeight}
+                onChange={(event) => setStartWeight(event.target.value)}
               />
             </div>
 
-            <div className="field">
-              <label htmlFor="settings-protein">Daily protein</label>
-              <input
-                id="settings-protein"
-                type="number"
-                step="5"
-                value={proteinTarget}
-                onChange={(event) => setProteinTarget(event.target.value)}
-              />
-            </div>
-          </div>
-
-          <div className="field-grid two-up">
             <div className="field">
               <label htmlFor="settings-goal-weight">Goal weight ({unit})</label>
               <input
@@ -179,7 +174,9 @@ export function SettingsPage({
                 onChange={(event) => setGoalWeight(event.target.value)}
               />
             </div>
+          </div>
 
+          <div className="field-grid two-up">
             <div className="field">
               <label htmlFor="settings-theme">Theme</label>
               <select
@@ -214,6 +211,46 @@ export function SettingsPage({
         </SectionCard>
 
         <div className="content-stack">
+          <SectionCard
+            title="Targets & expenditure"
+            description="Use the dedicated targets screen for baseline activity, calorie targets, macro modes, and breakdown previews."
+            action={
+              <Link to="/targets" className="button button-primary">
+                <Target size={18} /> Open targets
+              </Link>
+            }
+          >
+            <div className="summary-list compact-summary-list">
+              <div className="summary-row">
+                <span>Daily energy target</span>
+                <strong>{settings.profile.calorieTarget} kcal</strong>
+              </div>
+              <div className="summary-row">
+                <span>Protein / Carbs / Fat</span>
+                <strong>
+                  {settings.profile.proteinTarget}g / {settings.profile.carbsTarget}g / {settings.profile.fatTarget}g
+                </strong>
+              </div>
+              <div className="summary-row">
+                <span>Start & goal</span>
+                <strong>
+                  {settings.profile.startWeightKg
+                    ? `${toDisplayWeight(settings.profile.startWeightKg, settings.profile.unit).toFixed(1)} ${settings.profile.unit}`
+                    : 'Unset'}
+                  {' → '}
+                  {settings.profile.weightGoalKg
+                    ? `${toDisplayWeight(settings.profile.weightGoalKg, settings.profile.unit).toFixed(1)} ${settings.profile.unit}`
+                    : 'Unset'}
+                </strong>
+              </div>
+            </div>
+
+            <p className="subtle-text">
+              This is where ratio, fixed, and keto setups live now, along with the baseline
+              activity model and daily energy target breakdown.
+            </p>
+          </SectionCard>
+
           <SectionCard
             title="Backup & restore"
             description="Export a portable JSON backup or import one to restore everything locally."

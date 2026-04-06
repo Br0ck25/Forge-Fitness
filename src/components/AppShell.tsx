@@ -4,6 +4,7 @@ import {
   House,
   Scale,
   Settings,
+  Target,
   UtensilsCrossed,
   WifiOff,
 } from 'lucide-react'
@@ -22,6 +23,7 @@ interface AppShellProps {
 const navItems = [
   { to: '/', label: 'Dashboard', icon: House },
   { to: '/meals', label: 'Meals', icon: UtensilsCrossed },
+  { to: '/targets', label: 'Targets', icon: Target },
   { to: '/weight', label: 'Weight', icon: Scale },
   { to: '/workouts', label: 'Workouts', icon: Dumbbell },
   { to: '/settings', label: 'Settings', icon: Settings },

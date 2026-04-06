@@ -26,6 +26,10 @@ const WorkoutsPage = lazy(async () => ({
   default: (await import('./pages/WorkoutsPage')).WorkoutsPage,
 }))
 
+const TargetsPage = lazy(async () => ({
+  default: (await import('./pages/TargetsPage')).TargetsPage,
+}))
+
 const SettingsPage = lazy(async () => ({
   default: (await import('./pages/SettingsPage')).SettingsPage,
 }))
@@ -38,15 +42,7 @@ function App() {
   const settings = useLiveQuery(() => getAppSettings(), [], DEFAULT_SETTINGS)
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null)
   const [isOnline, setIsOnline] = useState<boolean>(() => navigator.onLine)
-  const settingsDraftKey = [
-    settings.theme,
-    settings.weekStartsOn,
-    settings.profile.name,
-    settings.profile.calorieTarget,
-    settings.profile.proteinTarget,
-    settings.profile.unit,
-    settings.profile.weightGoalKg ?? 'none',
-  ].join(':')
+  const settingsDraftKey = JSON.stringify(settings)
 
   useEffect(() => {
     void seedDatabase()
@@ -133,6 +129,16 @@ function App() {
             <Route path="/meals" element={<MealsPage settings={settings} />} />
             <Route path="/weight" element={<WeightPage settings={settings} />} />
             <Route path="/workouts" element={<WorkoutsPage settings={settings} />} />
+            <Route
+              path="/targets"
+              element={
+                <TargetsPage
+                  key={`targets:${settingsDraftKey}`}
+                  settings={settings}
+                  onSaveSettings={handleUpdateSettings}
+                />
+              }
+            />
             <Route
               path="/settings"
               element={

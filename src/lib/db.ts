@@ -7,6 +7,8 @@ import type {
   FoodDraft,
   MealEntry,
   SettingRecord,
+  StepsEntry,
+  StepsEntryDraft,
   WeightEntry,
   WeightEntryDraft,
   WorkoutExerciseTemplate,
@@ -15,6 +17,10 @@ import type {
   WorkoutTemplate,
   WorkoutTemplateDraft,
 } from '../types'
+import {
+  calculateStepsCaloriesBurned,
+  calculateWorkoutCaloriesBurned,
+} from './targets'
 import { calculateWorkoutVolume, cleanBarcode, roundValue, toDayKey } from './utils'
 
 const nowIso = () => new Date().toISOString()
@@ -28,8 +34,35 @@ export const DEFAULT_SETTINGS: AppSettings = {
     name: '',
     calorieTarget: 2200,
     proteinTarget: 160,
+    carbsTarget: 220,
+    fatTarget: 75,
+    startWeightKg: undefined,
     weightGoalKg: 75,
     unit: 'kg',
+  },
+  energySettings: {
+    activityLevel: 'lightly-active',
+    customActivityCalories: undefined,
+    customBmrKcal: undefined,
+    includeThermicEffect: false,
+  },
+  macroSettings: {
+    mode: 'ratio',
+    ratioTargets: {
+      proteinPercent: 30,
+      carbsPercent: 40,
+      fatPercent: 30,
+    },
+    fixedTargets: {
+      proteinGrams: 160,
+      carbsGrams: 220,
+      fatGrams: 75,
+    },
+    ketoSettings: {
+      program: 'moderate',
+      proteinPerKg: 1.6,
+      carbLimitGrams: 35,
+    },
   },
 }
 
@@ -123,6 +156,8 @@ const createTemplate = (
   id: string,
   name: string,
   focus: string,
+  sessionType: WorkoutTemplate['sessionType'],
+  intensity: WorkoutTemplate['intensity'],
   exercises: WorkoutExerciseTemplate[],
 ): WorkoutTemplate => {
   const timestamp = nowIso()
@@ -131,6 +166,8 @@ const createTemplate = (
     id,
     name,
     focus,
+    sessionType,
+    intensity,
     exercises,
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -138,7 +175,7 @@ const createTemplate = (
 }
 
 const defaultTemplates: WorkoutTemplate[] = [
-  createTemplate('template-full-body', 'Full Body Strength', 'Strength', [
+  createTemplate('template-full-body', 'Full Body Strength', 'Strength', 'strength', 'moderate', [
     createSeedExercise('Back Squat', 'strength', {
       target: 'Lower body power',
       defaultSets: 4,
@@ -162,7 +199,7 @@ const defaultTemplates: WorkoutTemplate[] = [
       defaultDurationMinutes: 3,
     }),
   ]),
-  createTemplate('template-conditioning', 'Sprint + Core Reset', 'Conditioning', [
+  createTemplate('template-conditioning', 'Sprint + Core Reset', 'Conditioning', 'hiit', 'high', [
     createSeedExercise('Bike Sprint Intervals', 'cardio', {
       target: 'Anaerobic conditioning',
       defaultDurationMinutes: 20,
@@ -178,7 +215,7 @@ const defaultTemplates: WorkoutTemplate[] = [
       defaultDurationMinutes: 5,
     }),
   ]),
-  createTemplate('template-recovery', 'Recovery Flow', 'Mobility', [
+  createTemplate('template-recovery', 'Recovery Flow', 'Mobility', 'mobility', 'low', [
     createSeedExercise('Treadmill Walk', 'cardio', {
       target: 'Low-intensity movement',
       defaultDurationMinutes: 25,
@@ -198,6 +235,7 @@ class ForgeFitnessDb extends Dexie {
   foods!: Table<Food, string>
   mealEntries!: Table<MealEntry, string>
   weightEntries!: Table<WeightEntry, string>
+  stepsEntries!: Table<StepsEntry, string>
   workoutTemplates!: Table<WorkoutTemplate, string>
   workoutSessions!: Table<WorkoutSession, string>
   settings!: Table<SettingRecord<AppSettings>, string>
@@ -209,6 +247,16 @@ class ForgeFitnessDb extends Dexie {
       foods: 'id, name, barcode, updatedAt, lastUsedAt, favorite',
       mealEntries: 'id, dayKey, occurredAt, mealType, createdAt',
       weightEntries: 'id, date, updatedAt',
+      workoutTemplates: 'id, name, focus, updatedAt',
+      workoutSessions: 'id, occurredAt, templateId, createdAt',
+      settings: 'key',
+    })
+
+    this.version(2).stores({
+      foods: 'id, name, barcode, updatedAt, lastUsedAt, favorite',
+      mealEntries: 'id, dayKey, occurredAt, mealType, createdAt',
+      weightEntries: 'id, date, updatedAt',
+      stepsEntries: 'id, date, updatedAt',
       workoutTemplates: 'id, name, focus, updatedAt',
       workoutSessions: 'id, occurredAt, templateId, createdAt',
       settings: 'key',
@@ -227,6 +275,26 @@ const mergeSettings = (
   profile: {
     ...current.profile,
     ...(updates.profile ?? {}),
+  },
+  energySettings: {
+    ...current.energySettings,
+    ...(updates.energySettings ?? {}),
+  },
+  macroSettings: {
+    ...current.macroSettings,
+    ...(updates.macroSettings ?? {}),
+    ratioTargets: {
+      ...current.macroSettings.ratioTargets,
+      ...(updates.macroSettings?.ratioTargets ?? {}),
+    },
+    fixedTargets: {
+      ...current.macroSettings.fixedTargets,
+      ...(updates.macroSettings?.fixedTargets ?? {}),
+    },
+    ketoSettings: {
+      ...current.macroSettings.ketoSettings,
+      ...(updates.macroSettings?.ketoSettings ?? {}),
+    },
   },
 })
 
@@ -372,6 +440,33 @@ export async function saveWeightEntry(draft: WeightEntryDraft): Promise<WeightEn
   return entry
 }
 
+export async function saveStepsEntry(draft: StepsEntryDraft): Promise<StepsEntry> {
+  const timestamp = nowIso()
+  const existing = await db.stepsEntries.where('date').equals(draft.date).first()
+  const caloriesBurned = calculateStepsCaloriesBurned(
+    Math.max(0, Math.round(draft.steps)),
+    draft.referenceWeightKg ?? DEFAULT_SETTINGS.profile.weightGoalKg ?? 75,
+    draft.stepLengthMeters,
+  )
+
+  const entry: StepsEntry = {
+    id: existing?.id ?? createId(),
+    date: draft.date,
+    steps: Math.max(0, Math.round(draft.steps)),
+    caloriesBurned,
+    note: draft.note?.trim() || undefined,
+    createdAt: existing?.createdAt ?? timestamp,
+    updatedAt: timestamp,
+  }
+
+  await db.stepsEntries.put(entry)
+  return entry
+}
+
+export async function deleteStepsEntry(id: string) {
+  await db.stepsEntries.delete(id)
+}
+
 export async function deleteWeightEntry(id: string) {
   await db.weightEntries.delete(id)
 }
@@ -385,6 +480,11 @@ export async function saveWorkoutTemplate(
     id: existing?.id ?? createId(),
     name: draft.name.trim(),
     focus: draft.focus.trim(),
+    programName: draft.programName?.trim() || undefined,
+    phaseName: draft.phaseName?.trim() || undefined,
+    dayLabel: draft.dayLabel?.trim() || undefined,
+    sessionType: draft.sessionType ?? existing?.sessionType ?? 'mixed',
+    intensity: draft.intensity ?? existing?.intensity ?? 'moderate',
     exercises: draft.exercises.map((exercise) => ({
       ...exercise,
       id: exercise.id || createId(),
@@ -404,11 +504,19 @@ export async function saveWorkoutSession(
   draft: WorkoutSessionDraft,
 ): Promise<WorkoutSession> {
   const timestamp = nowIso()
+  const roundedDurationMinutes = Math.max(1, roundValue(draft.durationMinutes, 0))
+  const sessionType = draft.sessionType ?? 'mixed'
+  const intensity = draft.intensity ?? 'moderate'
   const session: WorkoutSession = {
     id: draft.id ?? createId(),
     templateId: draft.templateId,
     name: draft.name.trim(),
     focus: draft.focus.trim(),
+    programName: draft.programName?.trim() || undefined,
+    phaseName: draft.phaseName?.trim() || undefined,
+    dayLabel: draft.dayLabel?.trim() || undefined,
+    sessionType,
+    intensity,
     occurredAt: draft.occurredAt,
     exercises: draft.exercises.map((exercise) => ({
       ...exercise,
@@ -423,8 +531,16 @@ export async function saveWorkoutSession(
         : undefined,
       distanceKm: exercise.distanceKm ? roundValue(exercise.distanceKm, 2) : undefined,
     })),
-    durationMinutes: Math.max(1, roundValue(draft.durationMinutes, 0)),
+    durationMinutes: roundedDurationMinutes,
     energyLevel: Math.min(5, Math.max(1, Math.round(draft.energyLevel))),
+    caloriesBurned:
+      draft.calorieOverride ??
+      calculateWorkoutCaloriesBurned(
+        roundedDurationMinutes,
+        draft.referenceWeightKg ?? DEFAULT_SETTINGS.profile.weightGoalKg ?? 75,
+        sessionType,
+        intensity,
+      ),
     note: draft.note?.trim() || undefined,
     totalVolumeKg: calculateWorkoutVolume(draft.exercises),
     createdAt: timestamp,
@@ -439,11 +555,12 @@ export async function deleteWorkoutSession(id: string) {
 }
 
 export async function exportBackup(): Promise<AppBackup> {
-  const [foods, mealEntries, weightEntries, workoutTemplates, workoutSessions, settings] =
+  const [foods, mealEntries, weightEntries, stepsEntries, workoutTemplates, workoutSessions, settings] =
     await Promise.all([
       db.foods.toArray(),
       db.mealEntries.toArray(),
       db.weightEntries.toArray(),
+      db.stepsEntries.toArray(),
       db.workoutTemplates.toArray(),
       db.workoutSessions.toArray(),
       db.settings.get('app'),
@@ -455,6 +572,7 @@ export async function exportBackup(): Promise<AppBackup> {
     foods,
     mealEntries,
     weightEntries,
+    stepsEntries,
     workoutTemplates,
     workoutSessions,
     settings:
@@ -493,6 +611,7 @@ export async function importBackup(rawText: string) {
   const foods = parsed.foods
   const mealEntries = parsed.mealEntries
   const weightEntries = parsed.weightEntries
+  const stepsEntries = Array.isArray(parsed.stepsEntries) ? parsed.stepsEntries : []
   const workoutTemplates = parsed.workoutTemplates
   const workoutSessions = parsed.workoutSessions
 
@@ -502,6 +621,7 @@ export async function importBackup(rawText: string) {
       db.foods,
       db.mealEntries,
       db.weightEntries,
+      db.stepsEntries,
       db.workoutTemplates,
       db.workoutSessions,
       db.settings,
@@ -511,6 +631,7 @@ export async function importBackup(rawText: string) {
         db.foods.clear(),
         db.mealEntries.clear(),
         db.weightEntries.clear(),
+        db.stepsEntries.clear(),
         db.workoutTemplates.clear(),
         db.workoutSessions.clear(),
         db.settings.clear(),
@@ -526,6 +647,10 @@ export async function importBackup(rawText: string) {
 
       if (weightEntries.length > 0) {
         await db.weightEntries.bulkPut(weightEntries)
+      }
+
+      if (stepsEntries.length > 0) {
+        await db.stepsEntries.bulkPut(stepsEntries)
       }
 
       if (workoutTemplates.length > 0) {

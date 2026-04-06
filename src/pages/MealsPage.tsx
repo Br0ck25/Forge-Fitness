@@ -1,6 +1,6 @@
 import { useLiveQuery } from 'dexie-react-hooks'
 import { Search, ScanLine, Save, Star, Trash2, WandSparkles } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { BarcodeScannerModal } from '../components/BarcodeScannerModal'
 import { PageHeader } from '../components/PageHeader'
 import { SectionCard } from '../components/SectionCard'
@@ -11,7 +11,7 @@ import {
   saveFood,
   toggleFoodFavorite,
 } from '../lib/db'
-import { lookupBarcodeFood } from '../lib/barcode'
+import { lookupBarcodeFood, searchFoodDatabase } from '../lib/barcode'
 import {
   createMealTimestamp,
   MEAL_LABELS,
@@ -73,14 +73,18 @@ export function MealsPage({ settings }: MealsPageProps) {
   const [selectedDate, setSelectedDate] = useState(() => toDayKey(new Date()))
   const [selectedMealType, setSelectedMealType] = useState<MealType>('breakfast')
   const [servings, setServings] = useState('1')
-  const [search, setSearch] = useState('')
+  const [librarySearch, setLibrarySearch] = useState('')
+  const [foodSearchQuery, setFoodSearchQuery] = useState('')
+  const [foodSearchResults, setFoodSearchResults] = useState<FoodDraft[]>([])
   const [editor, setEditor] = useState<FoodEditorState>(() => createEmptyEditor())
   const [scannerOpen, setScannerOpen] = useState(false)
   const [isLookupRunning, setIsLookupRunning] = useState(false)
+  const [isFoodSearchRunning, setIsFoodSearchRunning] = useState(false)
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error'
     text: string
   } | null>(null)
+  const editorSectionRef = useRef<HTMLDivElement | null>(null)
 
   const foods = useLiveQuery(() => db.foods.toArray(), [], [])
   const entries = useLiveQuery(
@@ -101,7 +105,7 @@ export function MealsPage({ settings }: MealsPageProps) {
   }, [foods])
 
   const filteredFoods = useMemo(() => {
-    const query = search.trim().toLowerCase()
+    const query = librarySearch.trim().toLowerCase()
 
     if (!query) {
       return sortedFoods
@@ -111,7 +115,7 @@ export function MealsPage({ settings }: MealsPageProps) {
       const haystack = `${food.name} ${food.brand ?? ''} ${food.barcode ?? ''}`.toLowerCase()
       return haystack.includes(query)
     })
-  }, [search, sortedFoods])
+  }, [librarySearch, sortedFoods])
 
   const totals = useMemo(() => sumMealMacros(entries), [entries])
 
@@ -124,6 +128,13 @@ export function MealsPage({ settings }: MealsPageProps) {
       })),
     [entries],
   )
+
+  const focusEditor = () => {
+    window.requestAnimationFrame(() => {
+      editorSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      document.getElementById('food-name')?.focus()
+    })
+  }
 
   const handleSaveFood = async (shouldAddToMeals: boolean) => {
     if (!editor.name.trim()) {
@@ -188,6 +199,48 @@ export function MealsPage({ settings }: MealsPageProps) {
       type: 'success',
       text: `${food.name} added to ${MEAL_LABELS[selectedMealType].toLowerCase()}.`,
     })
+  }
+
+  const handleLoadEditor = (food: Food | FoodDraft, sourceLabel = 'food') => {
+    setEditor(toEditorState(food))
+    setFeedback({
+      type: 'success',
+      text: `${'id' in food ? food.name : food.name} loaded into the editor. Scroll up to tweak it, then save or log it.`,
+    })
+    focusEditor()
+  }
+
+  const handleFoodSearch = async () => {
+    setIsFoodSearchRunning(true)
+    setFeedback(null)
+
+    try {
+      const results = await searchFoodDatabase(foodSearchQuery)
+      setFoodSearchResults(results)
+      setFeedback({
+        type: 'success',
+        text:
+          results.length > 0
+            ? `Found ${results.length} food result${results.length === 1 ? '' : 's'}.`
+            : 'No foods matched that search.',
+      })
+    } catch (error) {
+      setFoodSearchResults([])
+      setFeedback({
+        type: 'error',
+        text:
+          error instanceof Error
+            ? error.message
+            : 'Food search failed. Try a simpler search term.',
+      })
+    } finally {
+      setIsFoodSearchRunning(false)
+    }
+  }
+
+  const handleQuickAddSearchResult = async (food: FoodDraft) => {
+    const savedFood = await saveFood(food)
+    await handleQuickAdd(savedFood)
   }
 
   const handleBarcodeDetected = async (barcode: string) => {
@@ -258,12 +311,12 @@ export function MealsPage({ settings }: MealsPageProps) {
         <article className="metric-card">
           <span className="metric-label">Carbs</span>
           <strong className="metric-value">{totals.carbs} g</strong>
-          <span className="metric-hint">Fuel for training and recovery</span>
+          <span className="metric-hint">Goal: {settings.profile.carbsTarget} g</span>
         </article>
         <article className="metric-card">
           <span className="metric-label">Fat</span>
           <strong className="metric-value">{totals.fat} g</strong>
-          <span className="metric-hint">Keep the daily balance visible</span>
+          <span className="metric-hint">Goal: {settings.profile.fatTarget} g</span>
         </article>
         <article className="metric-card">
           <span className="metric-label">Pantry items</span>
@@ -278,7 +331,97 @@ export function MealsPage({ settings }: MealsPageProps) {
         </div>
       ) : null}
 
+      <SectionCard
+        title="Search the food database"
+        description="Use text search when scanning is overkill, your label is smudged, or the camera just isn’t in the mood."
+      >
+        <div className="field-grid two-up">
+          <div className="field">
+            <label htmlFor="food-search-query">Food search</label>
+            <div className="search-row">
+              <Search size={18} />
+              <input
+                id="food-search-query"
+                className="input"
+                placeholder="Chicken breast, greek yogurt, protein bar..."
+                value={foodSearchQuery}
+                onChange={(event) => setFoodSearchQuery(event.target.value)}
+              />
+            </div>
+          </div>
+
+          <div className="inline-row">
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => {
+                void handleFoodSearch()
+              }}
+            >
+              <Search size={18} /> Search foods
+            </button>
+
+            <button
+              type="button"
+              className="button button-ghost"
+              onClick={() => setScannerOpen(true)}
+            >
+              <ScanLine size={18} /> Scan instead
+            </button>
+          </div>
+        </div>
+
+        {isFoodSearchRunning ? (
+          <div className="notice notice-success">Searching nutrition results…</div>
+        ) : null}
+
+        {foodSearchResults.length > 0 ? (
+          <div className="food-library">
+            {foodSearchResults.map((food, index) => (
+              <article key={`${food.name}-${food.barcode ?? index}`} className="food-card">
+                <div className="food-card-top">
+                  <div>
+                    <h3>{food.name}</h3>
+                    <p>
+                      {food.brand ? `${food.brand} • ` : ''}
+                      {food.servingLabel}
+                    </p>
+                  </div>
+
+                  <div className="food-actions">
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => handleLoadEditor(food, 'search result')}
+                    >
+                      Load into editor
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-primary"
+                      onClick={() => {
+                        void handleQuickAddSearchResult(food)
+                      }}
+                    >
+                      Add to {MEAL_LABELS[selectedMealType].toLowerCase()}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="macro-strip">
+                  <span className="macro-pill">{food.calories} kcal</span>
+                  <span className="macro-pill">P {food.protein} g</span>
+                  <span className="macro-pill">C {food.carbs} g</span>
+                  <span className="macro-pill">F {food.fat} g</span>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </SectionCard>
+
       <div className="grid grid-two">
+        <div ref={editorSectionRef}>
         <SectionCard
           title="Food editor"
           description="Create custom foods, refine barcode results, and decide whether the item should go straight into your log."
@@ -479,6 +622,7 @@ export function MealsPage({ settings }: MealsPageProps) {
             <div className="notice notice-success">Looking up nutrition data from the barcode...</div>
           ) : null}
         </SectionCard>
+        </div>
 
         <SectionCard
           title="Daily meal log"
@@ -551,8 +695,8 @@ export function MealsPage({ settings }: MealsPageProps) {
                 id="pantry-search"
                 className="input"
                 placeholder="Search foods or barcodes"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                value={librarySearch}
+                onChange={(event) => setLibrarySearch(event.target.value)}
               />
             </div>
           </div>
@@ -584,7 +728,7 @@ export function MealsPage({ settings }: MealsPageProps) {
                     <button
                       type="button"
                       className="button button-secondary"
-                      onClick={() => setEditor(toEditorState(food))}
+                      onClick={() => handleLoadEditor(food, 'pantry item')}
                     >
                       Edit
                     </button>

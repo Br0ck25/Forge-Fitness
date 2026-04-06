@@ -20,20 +20,6 @@ const parseNumber = (value: unknown) => {
 const parseText = (value: unknown) =>
   typeof value === 'string' && value.trim() ? value.trim() : undefined
 
-const json = (payload: unknown, init: ResponseInit = {}) => {
-  const headers = new Headers(init.headers)
-  headers.set('Content-Type', 'application/json; charset=utf-8')
-
-  for (const [key, value] of Object.entries(corsHeaders)) {
-    headers.set(key, value)
-  }
-
-  return new Response(JSON.stringify(payload), {
-    ...init,
-    headers,
-  })
-}
-
 const normalizeProduct = (barcode: string, product: Record<string, unknown>) => {
   const nutriments =
     product.nutriments && typeof product.nutriments === 'object'
@@ -72,6 +58,20 @@ const normalizeProduct = (barcode: string, product: Record<string, unknown>) => 
   }
 }
 
+const json = (payload: unknown, init: ResponseInit = {}) => {
+  const headers = new Headers(init.headers)
+  headers.set('Content-Type', 'application/json; charset=utf-8')
+
+  for (const [key, value] of Object.entries(corsHeaders)) {
+    headers.set(key, value)
+  }
+
+  return new Response(JSON.stringify(payload), {
+    ...init,
+    headers,
+  })
+}
+
 const worker = {
   async fetch(request: Request): Promise<Response> {
     if (request.method === 'OPTIONS') {
@@ -93,6 +93,62 @@ const worker = {
       (pathSegments.length === 3 &&
         pathSegments[0] === 'api' &&
         pathSegments[1] === 'barcode')
+
+    const matchesSearchRoute =
+      (pathSegments.length === 2 && pathSegments[0] === 'foods' && pathSegments[1] === 'search') ||
+      (pathSegments.length === 3 &&
+        pathSegments[0] === 'api' &&
+        pathSegments[1] === 'foods' &&
+        pathSegments[2] === 'search')
+
+    if (matchesSearchRoute) {
+      const query = url.searchParams.get('q')?.trim() ?? ''
+
+      if (query.length < 2) {
+        return json({ message: 'Type at least two characters to search foods.' }, { status: 400 })
+      }
+
+      const searchUrl = new URL('https://world.openfoodfacts.org/cgi/search.pl')
+      searchUrl.searchParams.set('search_terms', query)
+      searchUrl.searchParams.set('search_simple', '1')
+      searchUrl.searchParams.set('action', 'process')
+      searchUrl.searchParams.set('json', '1')
+      searchUrl.searchParams.set('page_size', '12')
+      searchUrl.searchParams.set('fields', 'product_name,brands,code,serving_size,nutriments')
+
+      const searchResponse = await fetch(searchUrl.toString(), {
+        headers: {
+          Accept: 'application/json',
+          'User-Agent': 'Forge Fitness Search Worker/1.0 (+https://workers.dev)',
+        },
+      })
+
+      if (!searchResponse.ok) {
+        return json(
+          { message: 'Food search is unavailable right now.' },
+          { status: searchResponse.status >= 500 ? 502 : searchResponse.status },
+        )
+      }
+
+      const payload = (await searchResponse.json()) as Record<string, unknown>
+      const foods = Array.isArray(payload.products)
+        ? (payload.products as Array<Record<string, unknown>>)
+            .map((product) => {
+              const barcode = typeof product.code === 'string' ? product.code.replace(/\D/g, '') : ''
+              return {
+                ...normalizeProduct(barcode, product),
+                barcode: barcode || undefined,
+                source: 'search',
+              }
+            })
+            .filter((food) => food.name.trim())
+        : []
+
+      return json(
+        { foods, source: 'open-food-facts-search' },
+        { headers: { 'Cache-Control': 'public, max-age=3600' } },
+      )
+    }
 
     if (!matchesBarcodeRoute) {
       return json({ message: 'Not found.' }, { status: 404 })
