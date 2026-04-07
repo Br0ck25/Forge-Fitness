@@ -14,7 +14,13 @@ import {
   getActivityLevelMeta,
 } from '../lib/targets'
 import { formatWeight, roundValue } from '../lib/utils'
-import type { ActivityLevel, AppSettings, KetoProgram, MacroMode } from '../types'
+import type {
+  ActivityLevel,
+  AppSettings,
+  EnergyTargetMode,
+  KetoProgram,
+  MacroMode,
+} from '../types'
 
 interface TargetsPageProps {
   settings: AppSettings
@@ -24,6 +30,7 @@ interface TargetsPageProps {
 export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
   const latestWeight = useLiveQuery(() => db.weightEntries.orderBy('date').last(), [], undefined)
   const [calorieTarget, setCalorieTarget] = useState(String(settings.profile.calorieTarget))
+  const [targetMode, setTargetMode] = useState<EnergyTargetMode>(settings.energySettings.targetMode)
   const [activityLevel, setActivityLevel] = useState<ActivityLevel>(
     settings.energySettings.activityLevel,
   )
@@ -76,6 +83,7 @@ export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
       },
       energySettings: {
         ...settings.energySettings,
+        targetMode,
         activityLevel,
         customActivityCalories:
           activityLevel === 'custom'
@@ -122,6 +130,7 @@ export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
       proteinPerKg,
       proteinPercent,
       settings,
+      targetMode,
     ],
   )
 
@@ -141,6 +150,32 @@ export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
   const selectedActivityMeta = getActivityLevelMeta(activityLevel)
   const selectedKetoMeta =
     KETO_PROGRAMS.find((program) => program.id === ketoProgram) ?? KETO_PROGRAMS[1]
+  const targetModeLabel = targetMode === 'goal' ? 'Goal-based' : 'Manual'
+  const usingGoalTarget = energyBreakdown.isGoalBasedTarget
+  const weeklyGoalPaceLabel =
+    energyBreakdown.weeklyGoalChangeKg === 0
+      ? 'Maintenance'
+      : `${formatWeight(Math.abs(energyBreakdown.weeklyGoalChangeKg), settings.profile.unit)} / week ${energyBreakdown.weeklyGoalChangeKg < 0 ? 'loss' : 'gain'}`
+  const macroCards = [
+    {
+      label: 'Protein',
+      grams: macroTargets.proteinGrams,
+      calories: macroTargets.proteinCalories,
+      percent: macroTargets.proteinPercent,
+    },
+    {
+      label: 'Carbs',
+      grams: macroTargets.carbsGrams,
+      calories: macroTargets.carbsCalories,
+      percent: macroTargets.carbsPercent,
+    },
+    {
+      label: 'Fat',
+      grams: macroTargets.fatGrams,
+      calories: macroTargets.fatCalories,
+      percent: macroTargets.fatPercent,
+    },
+  ]
 
   const handleSave = async () => {
     if (macroMode === 'ratio' && ratioTotal !== 100) {
@@ -187,7 +222,9 @@ export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
         <article className="metric-card accent-card">
           <span className="metric-label">Energy target</span>
           <strong className="metric-value">{energyBreakdown.energyTargetKcal}</strong>
-          <span className="metric-hint">Calories per day</span>
+          <span className="metric-hint">
+            {usingGoalTarget ? 'Calculated from your weight goal' : 'Calories per day'}
+          </span>
         </article>
 
         <article className="metric-card">
@@ -203,7 +240,11 @@ export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
             {energyBreakdown.goalAdjustmentKcal}
           </strong>
           <span className="metric-hint">
-            {energyBreakdown.goalAdjustmentKcal >= 0 ? 'Surplus vs baseline' : 'Deficit vs baseline'}
+            {usingGoalTarget
+              ? weeklyGoalPaceLabel
+              : energyBreakdown.goalAdjustmentKcal >= 0
+                ? 'Surplus vs baseline'
+                : 'Deficit vs baseline'}
           </span>
         </article>
 
@@ -239,24 +280,59 @@ export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
       <div className="grid grid-two">
         <SectionCard
           title="Energy target"
-          description="Pick how much baseline movement you want counted automatically before steps and workouts are added on top."
+          description="Choose whether calories stay manual or are calculated from your weight goal, then set how much baseline movement should count before steps and workouts are added on top."
           action={
             <span className="chip">
-              <Gauge size={16} /> {selectedActivityMeta.label}
+              <Gauge size={16} /> {targetModeLabel}
             </span>
           }
         >
+          <div className="segmented-control">
+            <button
+              type="button"
+              className={`segmented-button ${targetMode === 'manual' ? 'active' : ''}`}
+              onClick={() => setTargetMode('manual')}
+            >
+              Manual calories
+            </button>
+            <button
+              type="button"
+              className={`segmented-button ${targetMode === 'goal' ? 'active' : ''}`}
+              onClick={() => setTargetMode('goal')}
+            >
+              Goal-based calories
+            </button>
+          </div>
+
+          <p className="subtle-text">
+            Goal-based mode uses your current reference weight, goal weight, and a moderate pace of up to 0.5% bodyweight per week to auto-calculate calories. Manual mode keeps a fixed target.
+          </p>
+
           <div className="field-grid two-up">
             <div className="field">
-              <label htmlFor="targets-calories">Daily energy target</label>
-              <input
-                id="targets-calories"
-                type="number"
-                min="1200"
-                step="25"
-                value={calorieTarget}
-                onChange={(event) => setCalorieTarget(event.target.value)}
-              />
+              {targetMode === 'manual' ? (
+                <>
+                  <label htmlFor="targets-calories">Manual daily energy target</label>
+                  <input
+                    id="targets-calories"
+                    type="number"
+                    min="1200"
+                    step="25"
+                    value={calorieTarget}
+                    onChange={(event) => setCalorieTarget(event.target.value)}
+                  />
+                </>
+              ) : (
+                <>
+                  <label htmlFor="targets-calories-derived">Calculated from weight goal</label>
+                  <input
+                    id="targets-calories-derived"
+                    type="number"
+                    value={energyBreakdown.energyTargetKcal}
+                    disabled
+                  />
+                </>
+              )}
             </div>
 
             <div className="field">
@@ -274,6 +350,33 @@ export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
               </select>
             </div>
           </div>
+
+          {targetMode === 'goal' ? (
+            <div className="summary-list compact-summary-list">
+              <div className="summary-row">
+                <span>Goal weight</span>
+                <strong>
+                  {settings.profile.weightGoalKg
+                    ? formatWeight(settings.profile.weightGoalKg, settings.profile.unit)
+                    : 'Set in Settings'}
+                </strong>
+              </div>
+              <div className="summary-row">
+                <span>Recommended pace</span>
+                <strong>{weeklyGoalPaceLabel}</strong>
+              </div>
+              <div className="summary-row">
+                <span>Calculated energy target</span>
+                <strong>{energyBreakdown.energyTargetKcal} kcal</strong>
+              </div>
+            </div>
+          ) : null}
+
+          {targetMode === 'goal' && !settings.profile.weightGoalKg ? (
+            <div className="notice notice-error">
+              Add a goal weight in Settings to fully enable goal-based calorie targets.
+            </div>
+          ) : null}
 
           <p className="subtle-text">{selectedActivityMeta.description}</p>
           <p className="subtle-text">Example: {selectedActivityMeta.example}</p>
@@ -345,12 +448,24 @@ export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
               <strong>{energyBreakdown.baselineExpenditureKcal} kcal</strong>
             </div>
             <div className="summary-row">
-              <span>Target adjustment</span>
+              <span>{usingGoalTarget ? 'Goal pace adjustment' : 'Target adjustment'}</span>
               <strong>
                 {energyBreakdown.goalAdjustmentKcal > 0 ? '+' : ''}
                 {energyBreakdown.goalAdjustmentKcal} kcal
               </strong>
             </div>
+            <div className="summary-row">
+              <span>Energy target source</span>
+              <strong>
+                {usingGoalTarget ? 'Calculated from your weight goal' : 'Manual calorie target'}
+              </strong>
+            </div>
+            {targetMode === 'goal' ? (
+              <div className="summary-row">
+                <span>Weekly goal pace</span>
+                <strong>{weeklyGoalPaceLabel}</strong>
+              </div>
+            ) : null}
           </div>
 
           <div className="notice notice-success">
@@ -383,6 +498,12 @@ export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
               </button>
             ))}
           </div>
+
+          {macroMode === 'ratio' ? (
+            <p className="subtle-text">
+              Ratio mode divides your energy target into protein, carbs, and fat. When the calorie target changes, the gram targets move with it automatically.
+            </p>
+          ) : null}
 
           {macroMode === 'ratio' ? (
             <>
@@ -530,7 +651,7 @@ export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
 
         <SectionCard
           title="Macro preview"
-          description="What the selected mode resolves to at your current calorie target."
+          description="What the selected mode resolves to at your current energy target."
           action={
             <span className="chip">
               <Footprints size={16} /> Based on {formatWeight(macroTargets.referenceWeightKg, settings.profile.unit)}
@@ -538,35 +659,18 @@ export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
           }
         >
           <div className="macro-target-grid">
-            <article className="food-card">
-              <div className="food-card-top">
-                <div>
-                  <h3>Protein</h3>
-                  <p>{roundValue(macroTargets.proteinPercent, 1)}% of calories</p>
+            {macroCards.map((macro) => (
+              <article key={macro.label} className="food-card">
+                <div className="food-card-top">
+                  <div>
+                    <h3>{macro.label}</h3>
+                    <p>{macro.calories} kcal</p>
+                  </div>
+                  <span className="chip">{macro.grams} g</span>
                 </div>
-                <span className="chip">{macroTargets.proteinGrams} g</span>
-              </div>
-            </article>
-
-            <article className="food-card">
-              <div className="food-card-top">
-                <div>
-                  <h3>Carbs</h3>
-                  <p>{roundValue(macroTargets.carbsPercent, 1)}% of calories</p>
-                </div>
-                <span className="chip">{macroTargets.carbsGrams} g</span>
-              </div>
-            </article>
-
-            <article className="food-card">
-              <div className="food-card-top">
-                <div>
-                  <h3>Fat</h3>
-                  <p>{roundValue(macroTargets.fatPercent, 1)}% of calories</p>
-                </div>
-                <span className="chip">{macroTargets.fatGrams} g</span>
-              </div>
-            </article>
+                <p className="subtle-text">{roundValue(macro.percent, 1)}% of calories</p>
+              </article>
+            ))}
           </div>
 
           <div className="summary-list compact-summary-list">
@@ -574,11 +678,25 @@ export function TargetsPage({ settings, onSaveSettings }: TargetsPageProps) {
               <span>Total calories from macros</span>
               <strong>{macroTargets.totalCalories} kcal</strong>
             </div>
+            {macroMode === 'ratio' ? (
+              <div className="summary-row">
+                <span>Ratios total</span>
+                <strong>{roundValue(macroTargets.ratioTotalPercent, 1)}%</strong>
+              </div>
+            ) : null}
+            <div className="summary-row">
+              <span>Energy target</span>
+              <strong>{macroTargets.energyTargetKcal} kcal</strong>
+            </div>
             <div className="summary-row">
               <span>Saved protein / carbs / fat targets</span>
               <strong>
                 {macroTargets.proteinGrams}g / {macroTargets.carbsGrams}g / {macroTargets.fatGrams}g
               </strong>
+            </div>
+            <div className="summary-row">
+              <span>Energy target source</span>
+              <strong>{usingGoalTarget ? 'Calculated from your weight goal' : 'Manual target'}</strong>
             </div>
             <div className="summary-row">
               <span>Reference weight</span>

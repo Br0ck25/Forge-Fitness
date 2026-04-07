@@ -114,6 +114,10 @@ export const WORKOUT_INTENSITY_OPTIONS: Array<{
   { id: 'extreme', label: 'Extreme', factor: 1.3 },
 ]
 
+const KCAL_PER_KG_BODYWEIGHT = 7700
+const DEFAULT_GOAL_RATE_FRACTION_PER_WEEK = 0.005
+const MIN_DAILY_ENERGY_TARGET_KCAL = 1200
+
 export const getReferenceWeightKg = (
   settings: AppSettings,
   latestWeightKg?: number,
@@ -150,6 +154,31 @@ export const calculateThermicEffectCalories = (
   return roundValue((bmrKcal + baselineActivityCalories) * 0.1, 0)
 }
 
+export const calculateGoalWeeklyChangeKg = (
+  referenceWeightKg: number,
+  goalWeightKg?: number,
+) => {
+  if (goalWeightKg === undefined) {
+    return 0
+  }
+
+  const remainingChangeKg = roundValue(goalWeightKg - referenceWeightKg, 2)
+
+  if (remainingChangeKg === 0) {
+    return 0
+  }
+
+  const moderateWeeklyChangeKg = referenceWeightKg * DEFAULT_GOAL_RATE_FRACTION_PER_WEEK
+
+  return roundValue(
+    Math.sign(remainingChangeKg) * Math.min(Math.abs(remainingChangeKg), moderateWeeklyChangeKg),
+    2,
+  )
+}
+
+export const calculateGoalAdjustmentKcal = (weeklyGoalChangeKg: number) =>
+  roundValue((weeklyGoalChangeKg * KCAL_PER_KG_BODYWEIGHT) / 7, 0)
+
 export const calculateEnergyTargetBreakdown = (
   settings: AppSettings,
   latestWeightKg?: number,
@@ -170,11 +199,30 @@ export const calculateEnergyTargetBreakdown = (
     bmrKcal + baselineActivityCalories + thermicEffectCalories,
     0,
   )
-  const energyTargetKcal = roundValue(settings.profile.calorieTarget, 0)
+  const weeklyGoalChangeKg =
+    settings.energySettings.targetMode === 'goal'
+      ? calculateGoalWeeklyChangeKg(referenceWeightKg, settings.profile.weightGoalKg)
+      : 0
+  const goalBasedTargetKcal = roundValue(
+    Math.max(
+      MIN_DAILY_ENERGY_TARGET_KCAL,
+      baselineExpenditureKcal + calculateGoalAdjustmentKcal(weeklyGoalChangeKg),
+    ),
+    0,
+  )
+  const isGoalBasedTarget =
+    settings.energySettings.targetMode === 'goal' && settings.profile.weightGoalKg !== undefined
+  const energyTargetKcal = isGoalBasedTarget
+    ? goalBasedTargetKcal
+    : roundValue(settings.profile.calorieTarget, 0)
   const goalAdjustmentKcal = roundValue(energyTargetKcal - baselineExpenditureKcal, 0)
 
   return {
     referenceWeightKg,
+    goalWeightKg: settings.profile.weightGoalKg,
+    targetMode: settings.energySettings.targetMode,
+    isGoalBasedTarget,
+    weeklyGoalChangeKg,
     bmrKcal,
     baselineActivityCalories,
     thermicEffectCalories,
@@ -188,24 +236,36 @@ export const deriveMacroTargets = (
   settings: AppSettings,
   latestWeightKg?: number,
 ) => {
-  const energyTargetKcal = roundValue(settings.profile.calorieTarget, 0)
-  const referenceWeightKg = getReferenceWeightKg(settings, latestWeightKg)
+  const { energyTargetKcal, referenceWeightKg } = calculateEnergyTargetBreakdown(
+    settings,
+    latestWeightKg,
+  )
 
   if (settings.macroSettings.mode === 'fixed') {
     const proteinGrams = roundValue(settings.macroSettings.fixedTargets.proteinGrams, 0)
     const carbsGrams = roundValue(settings.macroSettings.fixedTargets.carbsGrams, 0)
     const fatGrams = roundValue(settings.macroSettings.fixedTargets.fatGrams, 0)
-    const totalCalories = roundValue(proteinGrams * 4 + carbsGrams * 4 + fatGrams * 9, 0)
+    const proteinCalories = roundValue(proteinGrams * 4, 0)
+    const carbsCalories = roundValue(carbsGrams * 4, 0)
+    const fatCalories = roundValue(fatGrams * 9, 0)
+    const totalCalories = roundValue(proteinCalories + carbsCalories + fatCalories, 0)
 
     return {
       mode: settings.macroSettings.mode,
       proteinGrams,
       carbsGrams,
       fatGrams,
-      proteinPercent: energyTargetKcal ? roundValue((proteinGrams * 4 / energyTargetKcal) * 100, 1) : 0,
-      carbsPercent: energyTargetKcal ? roundValue((carbsGrams * 4 / energyTargetKcal) * 100, 1) : 0,
-      fatPercent: energyTargetKcal ? roundValue((fatGrams * 9 / energyTargetKcal) * 100, 1) : 0,
+      proteinCalories,
+      carbsCalories,
+      fatCalories,
+      proteinPercent: energyTargetKcal ? roundValue((proteinCalories / energyTargetKcal) * 100, 1) : 0,
+      carbsPercent: energyTargetKcal ? roundValue((carbsCalories / energyTargetKcal) * 100, 1) : 0,
+      fatPercent: energyTargetKcal ? roundValue((fatCalories / energyTargetKcal) * 100, 1) : 0,
+      ratioTotalPercent: energyTargetKcal
+        ? roundValue((totalCalories / energyTargetKcal) * 100, 1)
+        : 0,
       totalCalories,
+      energyTargetKcal,
       referenceWeightKg,
     }
   }
@@ -215,17 +275,27 @@ export const deriveMacroTargets = (
     const carbsGrams = roundValue(settings.macroSettings.ketoSettings.carbLimitGrams, 0)
     const remainingCalories = Math.max(0, energyTargetKcal - proteinGrams * 4 - carbsGrams * 4)
     const fatGrams = roundValue(remainingCalories / 9, 0)
-    const totalCalories = roundValue(proteinGrams * 4 + carbsGrams * 4 + fatGrams * 9, 0)
+    const proteinCalories = roundValue(proteinGrams * 4, 0)
+    const carbsCalories = roundValue(carbsGrams * 4, 0)
+    const fatCalories = roundValue(fatGrams * 9, 0)
+    const totalCalories = roundValue(proteinCalories + carbsCalories + fatCalories, 0)
 
     return {
       mode: settings.macroSettings.mode,
       proteinGrams,
       carbsGrams,
       fatGrams,
-      proteinPercent: energyTargetKcal ? roundValue((proteinGrams * 4 / energyTargetKcal) * 100, 1) : 0,
-      carbsPercent: energyTargetKcal ? roundValue((carbsGrams * 4 / energyTargetKcal) * 100, 1) : 0,
-      fatPercent: energyTargetKcal ? roundValue((fatGrams * 9 / energyTargetKcal) * 100, 1) : 0,
+      proteinCalories,
+      carbsCalories,
+      fatCalories,
+      proteinPercent: energyTargetKcal ? roundValue((proteinCalories / energyTargetKcal) * 100, 1) : 0,
+      carbsPercent: energyTargetKcal ? roundValue((carbsCalories / energyTargetKcal) * 100, 1) : 0,
+      fatPercent: energyTargetKcal ? roundValue((fatCalories / energyTargetKcal) * 100, 1) : 0,
+      ratioTotalPercent: energyTargetKcal
+        ? roundValue((totalCalories / energyTargetKcal) * 100, 1)
+        : 0,
       totalCalories,
+      energyTargetKcal,
       referenceWeightKg,
     }
   }
@@ -233,16 +303,24 @@ export const deriveMacroTargets = (
   const proteinPercent = settings.macroSettings.ratioTargets.proteinPercent
   const carbsPercent = settings.macroSettings.ratioTargets.carbsPercent
   const fatPercent = settings.macroSettings.ratioTargets.fatPercent
+  const proteinCalories = roundValue(energyTargetKcal * (proteinPercent / 100), 0)
+  const carbsCalories = roundValue(energyTargetKcal * (carbsPercent / 100), 0)
+  const fatCalories = roundValue(energyTargetKcal * (fatPercent / 100), 0)
 
   return {
     mode: settings.macroSettings.mode,
-    proteinGrams: roundValue((energyTargetKcal * (proteinPercent / 100)) / 4, 0),
-    carbsGrams: roundValue((energyTargetKcal * (carbsPercent / 100)) / 4, 0),
-    fatGrams: roundValue((energyTargetKcal * (fatPercent / 100)) / 9, 0),
+    proteinGrams: roundValue(proteinCalories / 4, 0),
+    carbsGrams: roundValue(carbsCalories / 4, 0),
+    fatGrams: roundValue(fatCalories / 9, 0),
+    proteinCalories,
+    carbsCalories,
+    fatCalories,
     proteinPercent,
     carbsPercent,
     fatPercent,
+    ratioTotalPercent: roundValue(proteinPercent + carbsPercent + fatPercent, 1),
     totalCalories: energyTargetKcal,
+    energyTargetKcal,
     referenceWeightKg,
   }
 }

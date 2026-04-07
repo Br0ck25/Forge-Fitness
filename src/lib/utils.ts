@@ -98,6 +98,20 @@ export const formatWeight = (
   digits = 1,
 ) => `${roundValue(toDisplayWeight(weightKg, unit), digits).toFixed(digits)} ${unit}`
 
+export const getDistanceUnit = (unit: WeightUnit) => (unit === 'lb' ? 'mi' : 'km')
+
+export const toDisplayDistance = (distanceKm: number, unit: WeightUnit) =>
+  unit === 'lb' ? distanceKm * 0.6213711922 : distanceKm
+
+export const fromDisplayDistance = (distanceValue: number, unit: WeightUnit) =>
+  unit === 'lb' ? distanceValue / 0.6213711922 : distanceValue
+
+export const formatDistance = (
+  distanceKm: number,
+  unit: WeightUnit,
+  digits = 1,
+) => `${roundValue(toDisplayDistance(distanceKm, unit), digits).toFixed(digits)} ${getDistanceUnit(unit)}`
+
 export const calculateWorkoutVolume = (exercises: LoggedExercise[]) =>
   roundValue(
     exercises.reduce((total, exercise) => {

@@ -11,6 +11,7 @@ export type ActivityLevel =
   | 'moderately-active'
   | 'very-active'
   | 'custom'
+export type EnergyTargetMode = 'manual' | 'goal'
 export type MacroMode = 'ratio' | 'fixed' | 'keto'
 export type KetoProgram = 'strict' | 'moderate' | 'liberal'
 export type WorkoutSessionType = 'strength' | 'cardio' | 'hiit' | 'mobility' | 'mixed'
@@ -149,6 +150,7 @@ export interface Profile {
 }
 
 export interface EnergySettings {
+  targetMode: EnergyTargetMode
   activityLevel: ActivityLevel
   customActivityCalories?: number
   customBmrKcal?: number

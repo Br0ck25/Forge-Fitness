@@ -1,9 +1,12 @@
+import { useLiveQuery } from 'dexie-react-hooks'
 import { Download, Rocket, Target, Upload } from 'lucide-react'
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { PageHeader } from '../components/PageHeader'
 import { SectionCard } from '../components/SectionCard'
 import { exportBackup, importBackup } from '../lib/db'
+import { db } from '../lib/db'
+import { calculateEnergyTargetBreakdown } from '../lib/targets'
 import { toDisplayWeight } from '../lib/utils'
 import type { AppSettings, ThemePreference, WeekStartPreference, WeightUnit } from '../types'
 
@@ -20,6 +23,7 @@ export function SettingsPage({
   onInstall,
   onSaveSettings,
 }: SettingsPageProps) {
+  const latestWeight = useLiveQuery(() => db.weightEntries.orderBy('date').last(), [], undefined)
   const [name, setName] = useState(settings.profile.name)
   const [startWeight, setStartWeight] = useState(
     settings.profile.startWeightKg
@@ -38,6 +42,7 @@ export function SettingsPage({
     type: 'success' | 'error'
     text: string
   } | null>(null)
+  const energyBreakdown = calculateEnergyTargetBreakdown(settings, latestWeight?.weightKg)
 
   const handleSave = async () => {
     await onSaveSettings({
@@ -223,7 +228,11 @@ export function SettingsPage({
             <div className="summary-list compact-summary-list">
               <div className="summary-row">
                 <span>Daily energy target</span>
-                <strong>{settings.profile.calorieTarget} kcal</strong>
+                <strong>{energyBreakdown.energyTargetKcal} kcal</strong>
+              </div>
+              <div className="summary-row">
+                <span>Target source</span>
+                <strong>{energyBreakdown.isGoalBasedTarget ? 'Goal-based' : 'Manual'}</strong>
               </div>
               <div className="summary-row">
                 <span>Protein / Carbs / Fat</span>

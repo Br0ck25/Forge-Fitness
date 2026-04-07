@@ -12,6 +12,7 @@ import {
   toggleFoodFavorite,
 } from '../lib/db'
 import { lookupBarcodeFood, searchFoodDatabase } from '../lib/barcode'
+import { calculateEnergyTargetBreakdown } from '../lib/targets'
 import {
   createMealTimestamp,
   MEAL_LABELS,
@@ -87,6 +88,7 @@ export function MealsPage({ settings }: MealsPageProps) {
   const editorSectionRef = useRef<HTMLDivElement | null>(null)
 
   const foods = useLiveQuery(() => db.foods.toArray(), [], [])
+  const latestWeight = useLiveQuery(() => db.weightEntries.orderBy('date').last(), [], undefined)
   const entries = useLiveQuery(
     () => db.mealEntries.where('dayKey').equals(selectedDate).sortBy('occurredAt'),
     [selectedDate],
@@ -118,6 +120,10 @@ export function MealsPage({ settings }: MealsPageProps) {
   }, [librarySearch, sortedFoods])
 
   const totals = useMemo(() => sumMealMacros(entries), [entries])
+  const energyTargetKcal = useMemo(
+    () => calculateEnergyTargetBreakdown(settings, latestWeight?.weightKg).energyTargetKcal,
+    [latestWeight?.weightKg, settings],
+  )
 
   const groupedEntries = useMemo(
     () =>
@@ -301,7 +307,7 @@ export function MealsPage({ settings }: MealsPageProps) {
         <article className="metric-card accent-card">
           <span className="metric-label">Calories</span>
           <strong className="metric-value">{totals.calories}</strong>
-          <span className="metric-hint">Target: {settings.profile.calorieTarget} kcal</span>
+          <span className="metric-hint">Target: {energyTargetKcal} kcal</span>
         </article>
         <article className="metric-card">
           <span className="metric-label">Protein</span>

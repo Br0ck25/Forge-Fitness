@@ -24,9 +24,11 @@ import {
 import { PageHeader } from '../components/PageHeader'
 import { SectionCard } from '../components/SectionCard'
 import { db } from '../lib/db'
+import { calculateEnergyTargetBreakdown } from '../lib/targets'
 import {
   calculateConsistencyStreak,
   formatDateTime,
+  formatDistance,
   formatLongDate,
   formatWeight,
   friendlyRelativeTime,
@@ -118,7 +120,8 @@ export function DashboardPage({ settings }: DashboardPageProps) {
   const latestWeight = weights[0]
   const previousWeight = weights[1]
   const latestSession = sessions[0]
-  const caloriesRemaining = Math.max(0, settings.profile.calorieTarget - todayMacros.calories)
+  const energyTargetKcal = calculateEnergyTargetBreakdown(settings, latestWeight?.weightKg).energyTargetKcal
+  const caloriesRemaining = Math.max(0, energyTargetKcal - todayMacros.calories)
   const proteinProgress = Math.min(
     100,
     (todayMacros.protein / Math.max(settings.profile.proteinTarget, 1)) * 100,
@@ -197,7 +200,7 @@ export function DashboardPage({ settings }: DashboardPageProps) {
           description="Calories and protein from your recent meal log."
           action={
             <span className="chip">
-              <Flame size={16} /> {settings.profile.calorieTarget} kcal target
+              <Flame size={16} /> {energyTargetKcal} kcal target
             </span>
           }
         >
@@ -318,17 +321,24 @@ export function DashboardPage({ settings }: DashboardPageProps) {
                 <div className="stats-line">
                   <span className="macro-pill">{latestSession.durationMinutes} min</span>
                   <span className="macro-pill">Energy {latestSession.energyLevel}/5</span>
-                  <span className="macro-pill">Volume {latestSession.totalVolumeKg} kg</span>
+                  <span className="macro-pill">Volume {formatWeight(latestSession.totalVolumeKg, settings.profile.unit, 0)}</span>
                 </div>
 
                 <ul>
                   {latestSession.exercises.slice(0, 4).map((exercise) => (
                     <li key={exercise.id}>
                       {exercise.name}
-                      {exercise.weightKg
-                        ? ` — ${exercise.sets ?? 0}×${exercise.reps ?? 0} @ ${exercise.weightKg} kg`
-                        : exercise.durationMinutes
-                          ? ` — ${exercise.durationMinutes} min`
+                      {typeof exercise.weightKg === 'number'
+                        ? ` — ${exercise.sets ?? 0}×${exercise.reps ?? 0} @ ${formatWeight(exercise.weightKg, settings.profile.unit, 1)}`
+                        : exercise.durationMinutes || exercise.distanceKm
+                          ? ` — ${[
+                              exercise.durationMinutes ? `${exercise.durationMinutes} min` : null,
+                              typeof exercise.distanceKm === 'number'
+                                ? formatDistance(exercise.distanceKm, settings.profile.unit)
+                                : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' • ')}`
                           : ''}
                     </li>
                   ))}

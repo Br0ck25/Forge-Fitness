@@ -14,6 +14,7 @@ import { PageHeader } from '../components/PageHeader'
 import { SectionCard } from '../components/SectionCard'
 import {
   db,
+  deleteWorkoutTemplate,
   deleteWorkoutSession,
   saveWorkoutSession,
   saveWorkoutTemplate,
@@ -27,13 +28,21 @@ import {
 import {
   calculateWorkoutVolume,
   formatDateTime,
+  formatDistance,
   formatWeight,
+  fromDisplayDistance,
+  fromDisplayWeight,
+  getDistanceUnit,
   roundValue,
+  toDisplayDistance,
+  toDisplayWeight,
 } from '../lib/utils'
 import type {
   AppSettings,
   ExerciseType,
   LoggedExercise,
+  WorkoutSession,
+  WeightUnit,
   WorkoutExerciseTemplate,
   WorkoutIntensity,
   WorkoutSessionType,
@@ -68,14 +77,38 @@ const createExerciseEditor = (): ExerciseEditor => ({
   note: '',
 })
 
-const fromTemplateExercise = (exercise: WorkoutExerciseTemplate): ExerciseEditor => ({
+const fromLoggedExercise = (exercise: LoggedExercise, unit: WeightUnit): ExerciseEditor => ({
+  id: exercise.id || crypto.randomUUID(),
+  name: exercise.name,
+  type: exercise.type,
+  sets: exercise.sets !== undefined ? String(exercise.sets) : '',
+  reps: exercise.reps !== undefined ? String(exercise.reps) : '',
+  weightKg:
+    exercise.weightKg !== undefined
+      ? String(roundValue(toDisplayWeight(exercise.weightKg, unit), 1))
+      : '',
+  durationMinutes:
+    exercise.durationMinutes !== undefined ? String(exercise.durationMinutes) : '',
+  distanceKm:
+    exercise.distanceKm !== undefined
+      ? String(roundValue(toDisplayDistance(exercise.distanceKm, unit), 1))
+      : '',
+  note: exercise.note ?? '',
+})
+
+const fromTemplateExercise = (
+  exercise: WorkoutExerciseTemplate,
+  unit: WeightUnit,
+): ExerciseEditor => ({
   id: crypto.randomUUID(),
   name: exercise.name,
   type: exercise.type,
   sets: exercise.defaultSets ? String(exercise.defaultSets) : '',
   reps: exercise.defaultReps ? String(exercise.defaultReps) : '',
   weightKg:
-    exercise.defaultWeightKg !== undefined ? String(exercise.defaultWeightKg) : '',
+    exercise.defaultWeightKg !== undefined
+      ? String(roundValue(toDisplayWeight(exercise.defaultWeightKg, unit), 1))
+      : '',
   durationMinutes:
     exercise.defaultDurationMinutes !== undefined
       ? String(exercise.defaultDurationMinutes)
@@ -111,6 +144,7 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
   )
 
   const [selectedTemplateId, setSelectedTemplateId] = useState('')
+  const [selectedSessionId, setSelectedSessionId] = useState('')
   const [sessionName, setSessionName] = useState('')
   const [sessionFocus, setSessionFocus] = useState('Strength')
   const [programName, setProgramName] = useState('')
@@ -123,13 +157,14 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
   const [energyLevel, setEnergyLevel] = useState('3')
   const [calorieOverride, setCalorieOverride] = useState('')
   const [note, setNote] = useState('')
-  const [exerciseRows, setExerciseRows] = useState<ExerciseEditor[]>([createExerciseEditor()])
+  const [exerciseRows, setExerciseRows] = useState<ExerciseEditor[]>([])
   const [feedback, setFeedback] = useState<{
     type: 'success' | 'error'
     text: string
   } | null>(null)
 
   const weekStartsOn = settings.weekStartsOn === 'monday' ? 1 : 0
+  const distanceUnit = getDistanceUnit(settings.profile.unit)
   const referenceWeightKg = getReferenceWeightKg(settings, latestWeight?.weightKg)
   const parsedCalorieOverride = calorieOverride.trim()
     ? Math.max(0, Number(calorieOverride) || 0)
@@ -205,6 +240,7 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
 
   const resetComposer = () => {
     setSelectedTemplateId('')
+    setSelectedSessionId('')
     setSessionName('')
     setSessionFocus('Strength')
     setProgramName('')
@@ -217,11 +253,12 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
     setEnergyLevel('3')
     setCalorieOverride('')
     setNote('')
-    setExerciseRows([createExerciseEditor()])
+    setExerciseRows([])
   }
 
   const loadTemplate = (template: WorkoutTemplate) => {
     setSelectedTemplateId(template.id)
+    setSelectedSessionId('')
     setSessionName(template.name)
     setSessionFocus(template.focus)
     setProgramName(template.programName ?? '')
@@ -229,17 +266,39 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
     setDayLabel(template.dayLabel ?? '')
     setSessionType(template.sessionType ?? 'mixed')
     setIntensity(template.intensity ?? 'moderate')
-    setDurationMinutes(
-      String(
-        template.exercises.reduce(
-          (total, exercise) => total + (exercise.defaultDurationMinutes ?? 0),
-          45,
-        ),
-      ),
+    const templateDuration = template.exercises.reduce(
+      (total, exercise) => total + (exercise.defaultDurationMinutes ?? 0),
+      0,
     )
+    setDurationMinutes(String(templateDuration || 45))
+    setOccurredAt(new Date().toISOString().slice(0, 16))
+    setEnergyLevel('3')
     setCalorieOverride('')
-    setExerciseRows(template.exercises.map(fromTemplateExercise))
+    setNote('')
+    setExerciseRows(template.exercises.map((exercise) => fromTemplateExercise(exercise, settings.profile.unit)))
     setFeedback({ type: 'success', text: `Loaded template: ${template.name}.` })
+  }
+
+  const loadSession = (session: WorkoutSession) => {
+    setSelectedSessionId(session.id)
+    setSelectedTemplateId(session.templateId ?? '')
+    setSessionName(session.name)
+    setSessionFocus(session.focus)
+    setProgramName(session.programName ?? '')
+    setPhaseName(session.phaseName ?? '')
+    setDayLabel(session.dayLabel ?? '')
+    setSessionType(session.sessionType ?? 'mixed')
+    setIntensity(session.intensity ?? 'moderate')
+    setOccurredAt(new Date(session.occurredAt).toISOString().slice(0, 16))
+    setDurationMinutes(String(session.durationMinutes))
+    setEnergyLevel(String(session.energyLevel))
+    setCalorieOverride(session.caloriesBurned !== undefined ? String(session.caloriesBurned) : '')
+    setNote(session.note ?? '')
+    setExerciseRows(session.exercises.map((exercise) => fromLoggedExercise(exercise, settings.profile.unit)))
+    setFeedback({
+      type: 'success',
+      text: `Loaded ${session.name} for editing. Update anything you want, then save the session again.`,
+    })
   }
 
   const handleExerciseChange = (
@@ -263,27 +322,28 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
         type: exercise.type,
         sets: exercise.sets ? Number(exercise.sets) : undefined,
         reps: exercise.reps ? Number(exercise.reps) : undefined,
-        weightKg: exercise.weightKg ? Number(exercise.weightKg) : undefined,
+        weightKg: exercise.weightKg
+          ? fromDisplayWeight(Number(exercise.weightKg), settings.profile.unit)
+          : undefined,
         durationMinutes: exercise.durationMinutes ? Number(exercise.durationMinutes) : undefined,
-        distanceKm: exercise.distanceKm ? Number(exercise.distanceKm) : undefined,
+        distanceKm: exercise.distanceKm
+          ? fromDisplayDistance(Number(exercise.distanceKm), settings.profile.unit)
+          : undefined,
         note: exercise.note.trim() || undefined,
       }))
   }
 
   const handleSaveSession = async () => {
     const normalizedExercises = normalizeExercises()
+    const isEditingSession = Boolean(selectedSessionId)
 
     if (!sessionName.trim()) {
       setFeedback({ type: 'error', text: 'Give the session a name before saving.' })
       return
     }
 
-    if (normalizedExercises.length === 0) {
-      setFeedback({ type: 'error', text: 'Add at least one exercise to the session.' })
-      return
-    }
-
     await saveWorkoutSession({
+      id: selectedSessionId || undefined,
       templateId: selectedTemplateId || undefined,
       name: sessionName,
       focus: sessionFocus,
@@ -303,24 +363,25 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
 
     setFeedback({
       type: 'success',
-      text: `${sessionName} saved with ${displayedCaloriesBurned} estimated calories burned.`,
+      text: `${sessionName} ${isEditingSession ? 'updated' : 'saved'} with ${displayedCaloriesBurned} estimated calories burned.`,
     })
     resetComposer()
   }
 
-  const handleSaveTemplate = async () => {
+  const handleSaveTemplate = async (mode: 'new' | 'update') => {
     const normalizedExercises = normalizeExercises()
+    const isUpdatingTemplate = mode === 'update' && Boolean(selectedTemplateId)
 
-    if (!sessionName.trim() || normalizedExercises.length === 0) {
+    if (!sessionName.trim()) {
       setFeedback({
         type: 'error',
-        text: 'Give the session a name and at least one exercise before saving a template.',
+        text: 'Give the workout or program a name before saving a template.',
       })
       return
     }
 
-    await saveWorkoutTemplate({
-      id: selectedTemplateId || undefined,
+    const savedTemplate = await saveWorkoutTemplate({
+      id: isUpdatingTemplate ? selectedTemplateId : undefined,
       name: sessionName,
       focus: sessionFocus,
       programName: programName || undefined,
@@ -340,11 +401,31 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
       })),
     })
 
+    setSelectedTemplateId(savedTemplate.id)
+
     setFeedback({
       type: 'success',
-      text: `${sessionName} saved as a reusable program template.`,
+      text: isUpdatingTemplate
+        ? `${sessionName} template updated.`
+        : `${sessionName} saved as a reusable program template.`,
     })
   }
+
+  const handleDeleteTemplate = async (template: WorkoutTemplate) => {
+    await deleteWorkoutTemplate(template.id)
+
+    if (selectedTemplateId === template.id) {
+      setSelectedTemplateId('')
+    }
+
+    setFeedback({
+      type: 'success',
+      text: `${template.name} template deleted.`,
+    })
+  }
+
+  const isEditingSession = Boolean(selectedSessionId)
+  const isEditingTemplate = Boolean(selectedTemplateId)
 
   return (
     <div className="content-stack">
@@ -376,8 +457,8 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
 
         <article className="metric-card">
           <span className="metric-label">Volume this week</span>
-          <strong className="metric-value">{totalVolumeThisWeek} kg</strong>
-          <span className="metric-hint">Strength movements only</span>
+          <strong className="metric-value">{formatWeight(totalVolumeThisWeek, settings.profile.unit, 0)}</strong>
+          <span className="metric-hint">Strength movements only, shown in your preferred unit</span>
         </article>
 
         <article className="metric-card">
@@ -389,7 +470,9 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
         <article className="metric-card">
           <span className="metric-label">Latest PR indicator</span>
           <strong className="metric-value">
-            {heaviestExercise ? `${heaviestExercise.weightKg} kg` : '—'}
+            {heaviestExercise?.weightKg
+              ? formatWeight(heaviestExercise.weightKg, settings.profile.unit, 1)
+              : '—'}
           </strong>
           <span className="metric-hint">
             {heaviestExercise
@@ -410,6 +493,18 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
       {feedback ? (
         <div className={`notice ${feedback.type === 'error' ? 'notice-error' : 'notice-success'}`}>
           {feedback.text}
+        </div>
+      ) : null}
+
+      {isEditingSession ? (
+        <div className="notice notice-success">
+          <Dumbbell size={18} /> Editing an existing workout session. Save session will update it.
+        </div>
+      ) : null}
+
+      {isEditingTemplate && !isEditingSession ? (
+        <div className="notice notice-success">
+          <BookmarkPlus size={18} /> Loaded template ready to update or duplicate as a new template.
         </div>
       ) : null}
 
@@ -613,141 +708,151 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
             </div>
           </div>
 
-          <div className="exercise-list">
-            {exerciseRows.map((exercise, index) => (
-              <article key={exercise.id} className="exercise-card">
-                <div className="entry-card-top">
-                  <div>
-                    <h3>Exercise {index + 1}</h3>
-                    <p>
-                      {exercise.type.charAt(0).toUpperCase() + exercise.type.slice(1)} entry
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    className="button button-danger"
-                    onClick={() =>
-                      setExerciseRows((current) =>
-                        current.length === 1
-                          ? current
-                          : current.filter((item) => item.id !== exercise.id),
-                      )
-                    }
-                  >
-                    <Trash2 size={16} /> Remove
-                  </button>
-                </div>
+          <div className="stack-sm">
+            <p className="subtle-text">
+              Exercise details are optional for program-style workouts. Leave this section empty if you just want to log the workout block, or add exercises for deeper detail.
+            </p>
 
-                <div className="field-grid two-up">
-                  <div className="field">
-                    <label>Name</label>
-                    <input
-                      value={exercise.name}
-                      onChange={(event) =>
-                        handleExerciseChange(exercise.id, 'name', event.target.value)
-                      }
-                    />
-                  </div>
-                  <div className="field">
-                    <label>Type</label>
-                    <select
-                      value={exercise.type}
-                      onChange={(event) =>
-                        handleExerciseChange(
-                          exercise.id,
-                          'type',
-                          event.target.value as ExerciseType,
-                        )
-                      }
-                    >
-                      <option value="strength">Strength</option>
-                      <option value="cardio">Cardio</option>
-                      <option value="mobility">Mobility</option>
-                    </select>
-                  </div>
-                </div>
+            {exerciseRows.length > 0 ? (
+              <div className="exercise-list">
+                {exerciseRows.map((exercise, index) => (
+                  <article key={exercise.id} className="exercise-card">
+                    <div className="entry-card-top">
+                      <div>
+                        <h3>Exercise {index + 1}</h3>
+                        <p>
+                          {exercise.type.charAt(0).toUpperCase() + exercise.type.slice(1)} entry
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="button button-danger"
+                        onClick={() =>
+                          setExerciseRows((current) =>
+                            current.filter((item) => item.id !== exercise.id),
+                          )
+                        }
+                      >
+                        <Trash2 size={16} /> Remove
+                      </button>
+                    </div>
 
-                <div className="field-grid two-up">
-                  <div className="field">
-                    <label>Sets</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={exercise.sets}
-                      onChange={(event) =>
-                        handleExerciseChange(exercise.id, 'sets', event.target.value)
-                      }
-                    />
-                  </div>
-                  <div className="field">
-                    <label>Reps</label>
-                    <input
-                      type="number"
-                      min="0"
-                      value={exercise.reps}
-                      onChange={(event) =>
-                        handleExerciseChange(exercise.id, 'reps', event.target.value)
-                      }
-                    />
-                  </div>
-                </div>
+                    <div className="field-grid two-up">
+                      <div className="field">
+                        <label>Name</label>
+                        <input
+                          value={exercise.name}
+                          onChange={(event) =>
+                            handleExerciseChange(exercise.id, 'name', event.target.value)
+                          }
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Type</label>
+                        <select
+                          value={exercise.type}
+                          onChange={(event) =>
+                            handleExerciseChange(
+                              exercise.id,
+                              'type',
+                              event.target.value as ExerciseType,
+                            )
+                          }
+                        >
+                          <option value="strength">Strength</option>
+                          <option value="cardio">Cardio</option>
+                          <option value="mobility">Mobility</option>
+                        </select>
+                      </div>
+                    </div>
 
-                <div className="field-grid two-up">
-                  <div className="field">
-                    <label>Weight (kg)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.5"
-                      value={exercise.weightKg}
-                      onChange={(event) =>
-                        handleExerciseChange(exercise.id, 'weightKg', event.target.value)
-                      }
-                    />
-                  </div>
-                  <div className="field">
-                    <label>Duration (min)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="1"
-                      value={exercise.durationMinutes}
-                      onChange={(event) =>
-                        handleExerciseChange(
-                          exercise.id,
-                          'durationMinutes',
-                          event.target.value,
-                        )
-                      }
-                    />
-                  </div>
-                </div>
+                    <div className="field-grid two-up">
+                      <div className="field">
+                        <label>Sets</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={exercise.sets}
+                          onChange={(event) =>
+                            handleExerciseChange(exercise.id, 'sets', event.target.value)
+                          }
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Reps</label>
+                        <input
+                          type="number"
+                          min="0"
+                          value={exercise.reps}
+                          onChange={(event) =>
+                            handleExerciseChange(exercise.id, 'reps', event.target.value)
+                          }
+                        />
+                      </div>
+                    </div>
 
-                <div className="field-grid two-up">
-                  <div className="field">
-                    <label>Distance (km)</label>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.1"
-                      value={exercise.distanceKm}
-                      onChange={(event) =>
-                        handleExerciseChange(exercise.id, 'distanceKm', event.target.value)
-                      }
-                    />
-                  </div>
-                  <div className="field">
-                    <label>Notes</label>
-                    <input
-                      value={exercise.note}
-                      onChange={(event) =>
-                        handleExerciseChange(exercise.id, 'note', event.target.value)
-                      }
-                    />
-                  </div>
-                </div>
-              </article>
-            ))}
+                    <div className="field-grid two-up">
+                      <div className="field">
+                        <label>Weight ({settings.profile.unit})</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.5"
+                          value={exercise.weightKg}
+                          onChange={(event) =>
+                            handleExerciseChange(exercise.id, 'weightKg', event.target.value)
+                          }
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Duration (min)</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          value={exercise.durationMinutes}
+                          onChange={(event) =>
+                            handleExerciseChange(
+                              exercise.id,
+                              'durationMinutes',
+                              event.target.value,
+                            )
+                          }
+                        />
+                      </div>
+                    </div>
+
+                    <div className="field-grid two-up">
+                      <div className="field">
+                        <label>Distance ({distanceUnit})</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          value={exercise.distanceKm}
+                          onChange={(event) =>
+                            handleExerciseChange(exercise.id, 'distanceKm', event.target.value)
+                          }
+                        />
+                      </div>
+                      <div className="field">
+                        <label>Notes</label>
+                        <input
+                          value={exercise.note}
+                          onChange={(event) =>
+                            handleExerciseChange(exercise.id, 'note', event.target.value)
+                          }
+                        />
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <div className="empty-state">
+                No exercises added. That is totally fine for program-style workouts.
+              </div>
+            )}
           </div>
 
           <div className="inline-row">
@@ -765,17 +870,28 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
                 void handleSaveSession()
               }}
             >
-              <Dumbbell size={18} /> Save session
+              <Dumbbell size={18} /> {isEditingSession ? 'Update session' : 'Save session'}
             </button>
             <button
               type="button"
               className="button button-ghost"
               onClick={() => {
-                void handleSaveTemplate()
+                void handleSaveTemplate('new')
               }}
             >
-              <BookmarkPlus size={18} /> Save as template
+              <BookmarkPlus size={18} /> Save as new template
             </button>
+            {isEditingTemplate ? (
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={() => {
+                  void handleSaveTemplate('update')
+                }}
+              >
+                <BookmarkPlus size={18} /> Update template
+              </button>
+            ) : null}
           </div>
         </SectionCard>
 
@@ -806,6 +922,15 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
                       >
                         Load
                       </button>
+                      <button
+                        type="button"
+                        className="button button-danger"
+                        onClick={() => {
+                          void handleDeleteTemplate(template)
+                        }}
+                      >
+                        <Trash2 size={16} /> Delete
+                      </button>
                     </div>
 
                     <div className="stats-line">
@@ -814,18 +939,22 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
                       <span className="macro-pill">{template.exercises.length} exercises</span>
                     </div>
 
-                    <ul>
-                      {template.exercises.slice(0, 4).map((exercise) => (
-                        <li key={exercise.id}>
-                          {exercise.name}
-                          {exercise.defaultSets
-                            ? ` — ${exercise.defaultSets}×${exercise.defaultReps ?? 0}`
-                            : exercise.defaultDurationMinutes
-                              ? ` — ${exercise.defaultDurationMinutes} min`
-                              : ''}
-                        </li>
-                      ))}
-                    </ul>
+                    {template.exercises.length > 0 ? (
+                      <ul>
+                        {template.exercises.slice(0, 4).map((exercise) => (
+                          <li key={exercise.id}>
+                            {exercise.name}
+                            {exercise.defaultSets
+                              ? ` — ${exercise.defaultSets}×${exercise.defaultReps ?? 0}`
+                              : exercise.defaultDurationMinutes
+                                ? ` — ${exercise.defaultDurationMinutes} min`
+                                : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="subtle-text">Program template only — no exercise breakdown saved.</p>
+                    )}
                   </article>
                 ))}
               </div>
@@ -856,6 +985,13 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
                       </div>
                       <button
                         type="button"
+                        className="button button-secondary"
+                        onClick={() => loadSession(session)}
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
                         className="button button-danger"
                         onClick={() => {
                           void deleteWorkoutSession(session.id)
@@ -875,24 +1011,37 @@ export function WorkoutsPage({ settings }: WorkoutsPageProps) {
                       <span className="macro-pill">{getSessionTypeLabel(session.sessionType)}</span>
                       <span className="macro-pill">{getIntensityLabel(session.intensity)}</span>
                       <span className="macro-pill">Energy {session.energyLevel}/5</span>
-                      <span className="macro-pill">Volume {roundValue(calculateWorkoutVolume(session.exercises), 0)} kg</span>
                       <span className="macro-pill">
-                        <Trophy size={14} /> {session.totalVolumeKg} kg
+                        Volume {formatWeight(roundValue(calculateWorkoutVolume(session.exercises), 0), settings.profile.unit, 0)}
+                      </span>
+                      <span className="macro-pill">
+                        <Trophy size={14} /> {formatWeight(session.totalVolumeKg, settings.profile.unit, 0)}
                       </span>
                     </div>
 
-                    <ul>
-                      {session.exercises.slice(0, 5).map((exercise) => (
-                        <li key={exercise.id}>
-                          {exercise.name}
-                          {exercise.weightKg
-                            ? ` — ${exercise.sets ?? 0}×${exercise.reps ?? 0} @ ${exercise.weightKg} kg`
-                            : exercise.durationMinutes
-                              ? ` — ${exercise.durationMinutes} min`
-                              : ''}
-                        </li>
-                      ))}
-                    </ul>
+                    {session.exercises.length > 0 ? (
+                      <ul>
+                        {session.exercises.slice(0, 5).map((exercise) => (
+                          <li key={exercise.id}>
+                            {exercise.name}
+                            {typeof exercise.weightKg === 'number'
+                              ? ` — ${exercise.sets ?? 0}×${exercise.reps ?? 0} @ ${formatWeight(exercise.weightKg, settings.profile.unit, 1)}`
+                              : exercise.durationMinutes || exercise.distanceKm
+                                ? ` — ${[
+                                    exercise.durationMinutes ? `${exercise.durationMinutes} min` : null,
+                                    typeof exercise.distanceKm === 'number'
+                                      ? formatDistance(exercise.distanceKm, settings.profile.unit)
+                                      : null,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' • ')}`
+                                : ''}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="subtle-text">Program-only workout log — no individual exercises were required.</p>
+                    )}
                   </article>
                 ))}
               </div>

@@ -41,6 +41,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     unit: 'kg',
   },
   energySettings: {
+    targetMode: 'manual',
     activityLevel: 'lightly-active',
     customActivityCalories: undefined,
     customBmrKcal: undefined,
@@ -500,16 +501,21 @@ export async function saveWorkoutTemplate(
   return template
 }
 
+export async function deleteWorkoutTemplate(id: string) {
+  await db.workoutTemplates.delete(id)
+}
+
 export async function saveWorkoutSession(
   draft: WorkoutSessionDraft,
 ): Promise<WorkoutSession> {
   const timestamp = nowIso()
+  const existing = draft.id ? await db.workoutSessions.get(draft.id) : undefined
   const roundedDurationMinutes = Math.max(1, roundValue(draft.durationMinutes, 0))
   const sessionType = draft.sessionType ?? 'mixed'
   const intensity = draft.intensity ?? 'moderate'
   const session: WorkoutSession = {
-    id: draft.id ?? createId(),
-    templateId: draft.templateId,
+    id: existing?.id ?? draft.id ?? createId(),
+    templateId: draft.templateId ?? existing?.templateId,
     name: draft.name.trim(),
     focus: draft.focus.trim(),
     programName: draft.programName?.trim() || undefined,
@@ -543,7 +549,7 @@ export async function saveWorkoutSession(
       ),
     note: draft.note?.trim() || undefined,
     totalVolumeKg: calculateWorkoutVolume(draft.exercises),
-    createdAt: timestamp,
+    createdAt: existing?.createdAt ?? timestamp,
   }
 
   await db.workoutSessions.put(session)
