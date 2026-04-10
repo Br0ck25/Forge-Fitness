@@ -1,73 +1,174 @@
 # Forge Fitness
 
-Forge Fitness is a local-first fitness PWA designed for fast daily use on mobile and desktop. It tracks meals, body weight, and workouts, includes a live barcode scanner for nutrition lookup, and is structured for Cloudflare Pages + Workers deployment.
+Forge Fitness is a mobile-first calorie tracking Progressive Web App built with Vite, React, TypeScript, Tailwind CSS, React Router, IndexedDB, and `vite-plugin-pwa`.
 
-## What’s inside
+The app is designed for fast daily use:
 
-- Meal tracking with calorie + macro rollups
-- Barcode-driven food lookup powered by a Cloudflare Worker
-- Weight logging with trend charts and goal tracking
-- Workout logging with reusable templates, session history, and volume stats
-- Offline-friendly IndexedDB persistence
-- Installable PWA with service worker, manifest, and mobile-safe shell
-- JSON backup export/import
+- optional onboarding
+- manual goals always allowed
+- bottom navigation on every screen
+- barcode scanning with Open Food Facts
+- favorites and reusable custom meals
+- offline-first local persistence with IndexedDB
+- installable PWA with service worker caching
 
-## Stack
+## Tech stack
 
-- React 19 + TypeScript + Vite
-- Dexie for IndexedDB persistence
-- Recharts for dashboards and trends
-- ZXing browser reader for barcode scanning
-- Cloudflare Worker for Open Food Facts proxying
+- Vite 7
+- React 19 + TypeScript
+- Tailwind CSS 4
+- React Router
+- Dexie + IndexedDB
+- `vite-plugin-pwa`
+- `@zxing/browser` for barcode scanning
+- Open Food Facts API for product search and barcode lookup
 
-## Local development
+## Features
 
-1. Install dependencies:
+### Core calorie tracking
 
-   npm install
+- daily calorie total
+- remaining calories
+- macro progress for protein, carbs, and fat
+- meal sections for breakfast, lunch, dinner, and snacks
+- add / edit / delete entries
+- move logged entries between meals
 
-2. Start the frontend:
+### Optional profile + manual goals
 
-   npm run dev
+- first-visit modal shown on first load only
+- skip is always available
+- optional profile fields:
+  - age
+  - sex
+  - height
+  - weight
+  - activity level
+- BMR + TDEE calorie suggestion using Mifflin–St Jeor
+- manual calorie and macro goals always editable in Settings
 
-3. Optional: run the barcode worker locally in a second terminal if you want the Cloudflare path instead of the built-in Open Food Facts fallback:
+### Food logging flows
 
-   npm run worker:dev
+- manual entry
+- food name search
+- barcode scanning with camera
+- manual barcode fallback
+- save foods as favorites
+- create reusable custom meals from multiple items
 
-The app will still attempt a direct Open Food Facts lookup if the Worker is unavailable, so barcode entry remains usable while you’re iterating.
+### PWA + offline
 
-## Cloudflare deployment
+- installable on supported mobile browsers
+- app shell cached via service worker
+- local persistence via IndexedDB
+- works offline for:
+  - viewing logs
+  - viewing favorites and meals
+  - adding manual entries
 
-### Frontend on Pages
+## Routes
 
-- Framework preset: `Vite`
-- Build command: `npm run build`
-- Build output directory: `dist`
+- `/` — Home dashboard + daily log
+- `/search` — Food search
+- `/scan` — Barcode scanner
+- `/saved` — Favorites + custom meals
+- `/settings` — Profile, goals, units, reset, app info
 
-Add `public/_redirects` to preserve SPA routing on Pages — it is already included in this project.
+## Project structure
 
-### Barcode API on Workers
+```text
+src/
+  components/
+    layout/
+    navigation/
+    ui/
+  features/
+    home/
+    saved/
+    scan/
+    search/
+    settings/
+  hooks/
+  store/
+  types/
+  utils/
+```
 
-Deploy the Worker with:
+## Getting started
 
-npm run worker:deploy
+### Requirements
 
-Once deployed, you can optionally set `VITE_BARCODE_API_BASE_URL` in Cloudflare Pages to the Worker origin if you want the frontend to call the Worker directly. If you proxy `/api/barcode/*` to the Worker at the edge, the app can keep using the default same-origin path with no environment variable.
+- Node.js 18+
+- npm 9+
 
-## Notes for real-world scanning
+### Install
 
-- Camera-based barcode scanning requires HTTPS on phones.
-- Good lighting matters more than most people would like to admit.
-- If a barcode is unknown or missing nutrition, the app lets you review and edit the values before saving.
+```bash
+npm install
+```
 
-## Validation
+### Run locally
 
-Use these during development:
+```bash
+npm run dev
+```
+
+Open the local URL shown by Vite.
+
+### Build for production
+
+```bash
+npm run build
+```
+
+### Lint
+
+```bash
+npm run lint
+```
+
+## Notes for barcode scanning
+
+- camera access requires user permission
+- mobile browser camera support works best on `https:` or `localhost`
+- if camera access is denied, the app supports:
+  - manual barcode lookup
+  - full manual food entry
+
+## Data storage
+
+The app stores all user data locally in IndexedDB:
+
+- settings
+- optional profile
+- goals
+- favorites
+- custom meals
+- daily log entries
+- first-visit state
+
+No server database is required.
+
+## API notes
+
+Open Food Facts is used for:
+
+- search by food name
+- barcode lookup
+
+The search flow is submit-based rather than search-as-you-type to be respectful of the API's published rate limits.
+
+## Verification
+
+Verified in this workspace:
 
 - `npm run lint`
 - `npm run build`
-- `npm run check`
 
-## Future-friendly extensions
+## Future improvements
 
-This v1 is intentionally local-first. If you want multi-device sync later, the clean next step would be adding user auth plus Cloudflare D1 or another hosted database without needing to redesign the UI surface.
+- add charts/history views
+- add recent foods
+- add export / import backup
+- add richer offline caching for previously seen API foods
+- split scan dependencies even further if native-like startup speed becomes the top priority
