@@ -39,6 +39,7 @@ export function defaultSettings(): AppSettingsRecord {
       height: 'cm',
     },
     backupReminder: 'off',
+    backupReminderLastShownDate: undefined,
     preferredMeal: 'snacks',
     updatedAt: Date.now(),
   }
@@ -148,6 +149,10 @@ function normalizeSettings(value: unknown): AppSettingsRecord {
       value.backupReminder === 'monthly'
         ? value.backupReminder
         : defaults.backupReminder,
+    backupReminderLastShownDate:
+      typeof value.backupReminderLastShownDate === 'string'
+        ? value.backupReminderLastShownDate
+        : undefined,
     preferredMeal: toMealKey(value.preferredMeal, defaults.preferredMeal),
     updatedAt: toNumber(value.updatedAt, defaults.updatedAt),
   }

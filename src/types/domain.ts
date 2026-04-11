@@ -104,6 +104,7 @@ export interface AppSettingsRecord {
   goals: GoalSettings
   units: UnitSettings
   backupReminder: BackupReminderOption
+  backupReminderLastShownDate?: string
   preferredMeal: MealKey
   updatedAt: number
 }

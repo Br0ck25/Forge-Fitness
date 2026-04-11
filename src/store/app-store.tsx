@@ -173,6 +173,39 @@ function updatePreferredMealInState(state: PersistedAppState, meal: MealKey) {
   }
 }
 
+function daysBetween(dateA: string, dateB: string) {
+  const diff = Date.parse(dateB) - Date.parse(dateA)
+  return Math.floor(diff / 86_400_000)
+}
+
+function isBackupReminderDue(
+  reminder: AppSettingsRecord['backupReminder'],
+  lastShownDate: string | undefined,
+  today: string,
+) {
+  if (reminder === 'off') {
+    return false
+  }
+
+  if (!lastShownDate) {
+    return true
+  }
+
+  if (reminder === 'daily') {
+    return lastShownDate !== today
+  }
+
+  if (reminder === 'weekly') {
+    return daysBetween(lastShownDate, today) >= 7
+  }
+
+  if (reminder === 'monthly') {
+    return daysBetween(lastShownDate, today) >= 30
+  }
+
+  return false
+}
+
 export function AppStoreProvider({ children }: PropsWithChildren) {
   const [selectedDate, setSelectedDate] = useState(toDateKey())
   const [persistedState, setPersistedState] = useState<PersistedAppState>(() =>
@@ -183,6 +216,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   const [notices, setNotices] = useState<AppNotice[]>([])
   const noticeTimeoutsRef = useRef(new Map<string, number>())
   const saveErrorShownRef = useRef(false)
+  const backupReminderCheckedRef = useRef(false)
 
   const dismissNotice = useCallback((id: string) => {
     const timeoutId = noticeTimeoutsRef.current.get(id)
@@ -260,6 +294,40 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       noticeTimeouts.clear()
     }
   }, [])
+
+  useEffect(() => {
+    const { backupReminder, backupReminderLastShownDate } = persistedState.settings
+    const today = toDateKey()
+
+    if (
+      backupReminderCheckedRef.current ||
+      backupReminder === 'off' ||
+      !isBackupReminderDue(backupReminder, backupReminderLastShownDate, today)
+    ) {
+      return
+    }
+
+    backupReminderCheckedRef.current = true
+
+    notify({
+      title: 'Backup reminder',
+      description:
+        backupReminder === 'daily'
+          ? 'It’s time to back up your Forge Fitness data. This reminder will only show once per day.'
+          : backupReminder === 'weekly'
+          ? 'Time for your weekly backup reminder. Export your data to keep it safe.'
+          : 'Time for your monthly backup reminder. Export your data to keep your progress safe.',
+    })
+
+    setPersistedState((current) => ({
+      ...current,
+      settings: {
+        ...current.settings,
+        backupReminderLastShownDate: today,
+        updatedAt: Date.now(),
+      },
+    }))
+  }, [notify, persistedState.settings, persistedState.settings.backupReminder, persistedState.settings.backupReminderLastShownDate])
 
   const mutateSettings = useCallback(
     async (mutator: (current: PersistedAppState['settings']) => PersistedAppState['settings']) => {
