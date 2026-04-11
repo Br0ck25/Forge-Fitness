@@ -1,5 +1,6 @@
-import { Heart, PencilLine, Plus, Trash2, UtensilsCrossed } from 'lucide-react'
+import { Heart, PencilLine, Plus, ScanLine, Search, Trash2, UtensilsCrossed } from 'lucide-react'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { FoodEditorSheet } from '../../components/ui/food-editor-sheet'
 import { MealBuilderModal } from '../../components/ui/meal-builder-modal'
 import { Card } from '../../components/ui/card'
@@ -17,6 +18,7 @@ export function SavedPage() {
     deleteCustomMeal,
     deleteFavorite,
     favorites,
+    notify,
     saveCustomMeal,
     saveFavorite,
     selectedDate,
@@ -36,6 +38,11 @@ export function SavedPage() {
       sourceType: 'favorite',
       favoriteId: favorite.id,
     })
+
+    notify({
+      title: 'Favorite added',
+      description: `${favorite.name} was added to ${mealLabels[settings.preferredMeal].toLowerCase()}.`,
+    })
   }
 
   async function handleAddMealToLog(meal: CustomMeal) {
@@ -53,6 +60,11 @@ export function SavedPage() {
       sourceType: 'meal',
       mealId: meal.id,
     })
+
+    notify({
+      title: 'Meal added',
+      description: `${meal.name} was added to ${mealLabels[settings.preferredMeal].toLowerCase()}.`,
+    })
   }
 
   async function handleSaveFavorite({ food }: {
@@ -61,12 +73,47 @@ export function SavedPage() {
     quantity: number
     saveFavorite: boolean
   }) {
+    const isEditing = Boolean(editingFavorite)
     await saveFavorite(food, {
       id: editingFavorite?.id,
       custom: editingFavorite?.custom ?? food.source === 'manual',
     })
+
+    notify({
+      title: isEditing ? 'Favorite updated' : 'Favorite saved',
+      description: `${food.name} is ready for one-tap logging from Saved.`,
+    })
+
     setFavoriteEditorOpen(false)
     setEditingFavorite(null)
+  }
+
+  async function handleDeleteFavorite(favorite: FavoriteFood) {
+    const confirmed = window.confirm(`Remove ${favorite.name} from favorites?`)
+    if (!confirmed) {
+      return
+    }
+
+    await deleteFavorite(favorite.id)
+    notify({
+      title: 'Favorite removed',
+      description: `${favorite.name} was removed from your saved foods.`,
+      tone: 'info',
+    })
+  }
+
+  async function handleDeleteMeal(meal: CustomMeal) {
+    const confirmed = window.confirm(`Remove ${meal.name}?`)
+    if (!confirmed) {
+      return
+    }
+
+    await deleteCustomMeal(meal.id)
+    notify({
+      title: 'Meal removed',
+      description: `${meal.name} was removed from your reusable meals.`,
+      tone: 'info',
+    })
   }
 
   return (
@@ -98,8 +145,19 @@ export function SavedPage() {
             className="button-primary"
           >
             <Plus className="h-4 w-4" />
-            New favorite
+            Manual
           </button>
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Link to="/search?intent=favorite" className="button-secondary">
+            <Search className="h-4 w-4" />
+            From search
+          </Link>
+          <Link to="/scan?intent=favorite" className="button-secondary">
+            <ScanLine className="h-4 w-4" />
+            From barcode
+          </Link>
         </div>
 
         {favorites.length === 0 ? (
@@ -158,7 +216,7 @@ export function SavedPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => void deleteFavorite(favorite.id)}
+                    onClick={() => void handleDeleteFavorite(favorite)}
                     className="button-secondary text-rose-600"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -251,7 +309,7 @@ export function SavedPage() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => void deleteCustomMeal(meal.id)}
+                    onClick={() => void handleDeleteMeal(meal)}
                     className="button-secondary text-rose-600"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -287,7 +345,12 @@ export function SavedPage() {
           setEditingMeal(undefined)
         }}
         onSave={async (meal) => {
+          const isEditing = Boolean(editingMeal)
           await saveCustomMeal(meal)
+          notify({
+            title: isEditing ? 'Meal updated' : 'Meal saved',
+            description: `${meal.name} is ready to reuse from Saved.`,
+          })
           setMealBuilderOpen(false)
           setEditingMeal(undefined)
         }}

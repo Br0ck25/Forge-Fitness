@@ -1,7 +1,9 @@
 import type {
   AppSettingsRecord,
   CustomMeal,
+  CustomMealItem,
   FavoriteFood,
+  FoodDraft,
   LogEntry,
   MealKey,
 } from '../types/domain'
@@ -23,6 +25,7 @@ export function defaultSettings(): AppSettingsRecord {
     profile: {},
     goals: {
       calorieMode: 'auto',
+      macroMode: 'auto',
       calorieGoal: 2000,
       proteinGoal: 150,
       carbsGoal: 200,
@@ -55,10 +58,33 @@ function toNumber(value: unknown, fallback: number) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
+function toNonNegativeNumber(value: unknown, fallback: number) {
+  const parsed = toNumber(value, fallback)
+  return parsed >= 0 ? parsed : fallback
+}
+
+function toRequiredText(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function toOptionalText(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
 function toMealKey(value: unknown, fallback: MealKey) {
   return typeof value === 'string' && MEAL_ORDER.includes(value as MealKey)
     ? (value as MealKey)
     : fallback
+}
+
+function toFoodSource(value: unknown, fallback: FoodDraft['source']) {
+  return value === 'api' || value === 'favorite' || value === 'custom-meal' || value === 'manual'
+    ? value
+    : fallback
+}
+
+function toLogSourceType(value: unknown, fallback: LogEntry['sourceType']) {
+  return value === 'favorite' || value === 'meal' || value === 'food' ? value : fallback
 }
 
 function normalizeSettings(value: unknown): AppSettingsRecord {
@@ -92,10 +118,11 @@ function normalizeSettings(value: unknown): AppSettingsRecord {
     },
     goals: {
       calorieMode: goals.calorieMode === 'manual' ? 'manual' : 'auto',
+      macroMode: goals.macroMode === 'manual' ? 'manual' : 'auto',
       calorieGoal: toNumber(goals.calorieGoal, defaults.goals.calorieGoal),
-      proteinGoal: toNumber(goals.proteinGoal, defaults.goals.proteinGoal),
-      carbsGoal: toNumber(goals.carbsGoal, defaults.goals.carbsGoal),
-      fatGoal: toNumber(goals.fatGoal, defaults.goals.fatGoal),
+      proteinGoal: toNonNegativeNumber(goals.proteinGoal, defaults.goals.proteinGoal),
+      carbsGoal: toNonNegativeNumber(goals.carbsGoal, defaults.goals.carbsGoal),
+      fatGoal: toNonNegativeNumber(goals.fatGoal, defaults.goals.fatGoal),
       goalAdjustment:
         goals.goalAdjustment === 'lose' ||
         goals.goalAdjustment === 'maintain' ||
@@ -112,8 +139,160 @@ function normalizeSettings(value: unknown): AppSettingsRecord {
   }
 }
 
-function normalizeArray<T>(value: unknown) {
-  return Array.isArray(value) ? (value as T[]) : []
+function normalizeFoodDraft(value: unknown, fallbackSource: FoodDraft['source']) {
+  if (!isPlainObject(value)) {
+    return undefined
+  }
+
+  const name = toRequiredText(value.name)
+  if (!name) {
+    return undefined
+  }
+
+  return {
+    name,
+    brand: toOptionalText(value.brand),
+    servingSize: toOptionalText(value.servingSize) ?? '1 serving',
+    calories: toNonNegativeNumber(value.calories, 0),
+    protein: toNonNegativeNumber(value.protein, 0),
+    carbs: toNonNegativeNumber(value.carbs, 0),
+    fat: toNonNegativeNumber(value.fat, 0),
+    barcode: toOptionalText(value.barcode),
+    imageUrl: toOptionalText(value.imageUrl),
+    source: toFoodSource(value.source, fallbackSource),
+    incompleteNutrition: typeof value.incompleteNutrition === 'boolean' ? value.incompleteNutrition : undefined,
+    notes: toOptionalText(value.notes),
+  } satisfies FoodDraft
+}
+
+function normalizeFavoriteFood(value: unknown) {
+  if (!isPlainObject(value)) {
+    return undefined
+  }
+
+  const id = toRequiredText(value.id)
+  const food = normalizeFoodDraft(value, 'favorite')
+
+  if (!id || !food) {
+    return undefined
+  }
+
+  return {
+    ...food,
+    id,
+    custom: typeof value.custom === 'boolean' ? value.custom : food.source === 'manual',
+    createdAt: toNumber(value.createdAt, Date.now()),
+    updatedAt: toNumber(value.updatedAt, Date.now()),
+    source: 'favorite',
+  } satisfies FavoriteFood
+}
+
+function normalizeCustomMealItem(value: unknown) {
+  if (!isPlainObject(value)) {
+    return undefined
+  }
+
+  const id = toRequiredText(value.id)
+  const food = normalizeFoodDraft(value.food, 'manual')
+
+  if (!id || !food) {
+    return undefined
+  }
+
+  return {
+    id,
+    quantity: Math.max(0.25, toNonNegativeNumber(value.quantity, 1)),
+    food,
+  } satisfies CustomMealItem
+}
+
+function normalizeCustomMeal(value: unknown) {
+  if (!isPlainObject(value)) {
+    return undefined
+  }
+
+  const id = toRequiredText(value.id)
+  const name = toRequiredText(value.name)
+  const items = normalizeCollection(value.items, normalizeCustomMealItem)
+
+  if (!id || !name || items.length === 0) {
+    return undefined
+  }
+
+  const totals = isPlainObject(value.totals)
+    ? {
+        calories: toNonNegativeNumber(value.totals.calories, 0),
+        protein: toNonNegativeNumber(value.totals.protein, 0),
+        carbs: toNonNegativeNumber(value.totals.carbs, 0),
+        fat: toNonNegativeNumber(value.totals.fat, 0),
+      }
+    : {
+        calories: 0,
+        protein: 0,
+        carbs: 0,
+        fat: 0,
+      }
+
+  return {
+    id,
+    name,
+    items,
+    totals,
+    servingSize: toOptionalText(value.servingSize) ?? '1 meal',
+    createdAt: toNumber(value.createdAt, Date.now()),
+    updatedAt: toNumber(value.updatedAt, Date.now()),
+  } satisfies CustomMeal
+}
+
+function normalizeLogEntry(value: unknown) {
+  if (!isPlainObject(value)) {
+    return undefined
+  }
+
+  const id = toRequiredText(value.id)
+  const food = normalizeFoodDraft(value.item, 'manual')
+  const date = toRequiredText(value.date)
+
+  if (!id || !food || !date) {
+    return undefined
+  }
+
+  return {
+    id,
+    date,
+    meal: toMealKey(value.meal, 'snacks'),
+    quantity: Math.max(0.25, toNonNegativeNumber(value.quantity, 1)),
+    item: food,
+    sourceType: toLogSourceType(value.sourceType, 'food'),
+    favoriteId: toOptionalText(value.favoriteId),
+    mealId: toOptionalText(value.mealId),
+    createdAt: toNumber(value.createdAt, Date.now()),
+    updatedAt: toNumber(value.updatedAt, Date.now()),
+  } satisfies LogEntry
+}
+
+function normalizeCollection<T>(value: unknown, normalizer: (item: unknown) => T | undefined) {
+  if (!Array.isArray(value)) {
+    return []
+  }
+
+  return value.flatMap((item) => {
+    const normalized = normalizer(item)
+    return normalized ? [normalized] : []
+  })
+}
+
+export function normalizePersistedAppState(value: unknown): PersistedAppState {
+  if (!isPlainObject(value)) {
+    return createDefaultPersistedState()
+  }
+
+  return {
+    settings: normalizeSettings(value.settings),
+    favorites: normalizeCollection(value.favorites, normalizeFavoriteFood),
+    customMeals: normalizeCollection(value.customMeals, normalizeCustomMeal),
+    logEntries: normalizeCollection(value.logEntries, normalizeLogEntry),
+  }
 }
 
 export function loadPersistedAppState(): PersistedAppState {
@@ -127,14 +306,7 @@ export function loadPersistedAppState(): PersistedAppState {
       return createDefaultPersistedState()
     }
 
-    const parsed = JSON.parse(rawValue) as Record<string, unknown>
-
-    return {
-      settings: normalizeSettings(parsed.settings),
-      favorites: normalizeArray<FavoriteFood>(parsed.favorites),
-      customMeals: normalizeArray<CustomMeal>(parsed.customMeals),
-      logEntries: normalizeArray<LogEntry>(parsed.logEntries),
-    }
+    return normalizePersistedAppState(JSON.parse(rawValue))
   } catch {
     return createDefaultPersistedState()
   }
@@ -147,8 +319,9 @@ export function savePersistedAppState(state: PersistedAppState) {
 
   try {
     window.localStorage.setItem(PERSISTED_STATE_KEY, JSON.stringify(state))
+    return true
   } catch {
-    // Ignore storage quota and access errors.
+    return false
   }
 }
 

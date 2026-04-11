@@ -2,9 +2,11 @@ import { Download, WifiOff } from 'lucide-react'
 import type { PropsWithChildren } from 'react'
 import { useLocation } from 'react-router-dom'
 import { BottomNav } from '../navigation/bottom-nav'
+import { ToastStack } from '../ui/toast-stack'
 import { useInstallPrompt } from '../../hooks/use-install-prompt'
 import { useOnlineStatus } from '../../hooks/use-online-status'
 import { usePwaUpdates } from '../../hooks/use-pwa-updates'
+import { useAppStore } from '../../store/app-store'
 
 const pageMeta = {
   '/': {
@@ -32,6 +34,7 @@ const pageMeta = {
 export function AppShell({ children }: PropsWithChildren) {
   const isOnline = useOnlineStatus()
   const location = useLocation()
+  const { dismissNotice, notices } = useAppStore()
   const { canInstall, promptInstall } = useInstallPrompt()
   const {
     dismissOfflineReady,
@@ -74,6 +77,8 @@ export function AppShell({ children }: PropsWithChildren) {
       </header>
 
       <main className="space-y-4 px-4 py-4">{children}</main>
+
+      <ToastStack notices={notices} onDismiss={dismissNotice} />
 
       {offlineReady ? (
         <div className="fixed inset-x-4 bottom-28 z-50 mx-auto max-w-md rounded-3xl bg-slate-900 px-4 py-3 text-sm text-white shadow-2xl">

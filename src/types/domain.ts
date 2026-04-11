@@ -7,8 +7,10 @@ export type GoalAdjustment = 'lose' | 'maintain' | 'gain'
 export type WeightUnit = 'kg' | 'lb'
 export type HeightUnit = 'cm' | 'ft-in'
 export type CalorieMode = 'auto' | 'manual'
+export type MacroMode = 'auto' | 'manual'
 export type FoodSource = 'manual' | 'api' | 'favorite' | 'custom-meal'
 export type LogSourceType = 'food' | 'favorite' | 'meal'
+export type NoticeTone = 'success' | 'error' | 'info'
 
 export interface NutritionValues {
   calories: number
@@ -74,6 +76,7 @@ export interface Profile {
 
 export interface GoalSettings {
   calorieMode: CalorieMode
+  macroMode: MacroMode
   calorieGoal: number
   proteinGoal: number
   carbsGoal: number
@@ -97,7 +100,12 @@ export interface AppSettingsRecord {
 
 export interface ResolvedGoals extends NutritionValues {
   source: CalorieMode
+  macroMode: MacroMode
+  macroCalories: number
+  calorieVariance: number
   suggestedCalories?: number
+  bmr?: number
+  tdee?: number
   goalAdjustment: GoalAdjustment
 }
 
@@ -106,6 +114,13 @@ export interface DailySummary {
   remaining: NutritionValues
   progress: NutritionValues
   calorieTarget: number
+}
+
+export interface AppNotice {
+  id: string
+  title: string
+  description?: string
+  tone: NoticeTone
 }
 
 export const mealLabels: Record<MealKey, string> = {

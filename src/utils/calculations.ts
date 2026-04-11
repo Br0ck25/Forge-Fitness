@@ -23,6 +23,31 @@ const goalAdjustmentMap: Record<GoalAdjustment, number> = {
   gain: 250,
 }
 
+const macroDistributionMap: Record<
+  GoalAdjustment,
+  { protein: number; carbs: number; fat: number }
+> = {
+  lose: {
+    protein: 0.35,
+    carbs: 0.35,
+    fat: 0.3,
+  },
+  maintain: {
+    protein: 0.3,
+    carbs: 0.4,
+    fat: 0.3,
+  },
+  gain: {
+    protein: 0.25,
+    carbs: 0.5,
+    fat: 0.25,
+  },
+}
+
+function roundMacro(value: number) {
+  return Math.round(value * 10) / 10
+}
+
 export function isProfileComplete(profile: Profile) {
   return Boolean(
     profile.age &&
@@ -67,7 +92,32 @@ export function calculateSuggestedCalories(profile: Profile, goalAdjustment: Goa
   return Math.max(1200, Math.round(tdee + goalAdjustmentMap[goalAdjustment]))
 }
 
+export function calculateMacroCalories(
+  values: Pick<NutritionValues, 'protein' | 'carbs' | 'fat'>,
+) {
+  return Math.round(values.protein * 4 + values.carbs * 4 + values.fat * 9)
+}
+
+export function calculateAutomaticMacroGoals(
+  calories: number,
+  goalAdjustment: GoalAdjustment,
+): NutritionValues {
+  const distribution = macroDistributionMap[goalAdjustment]
+  const protein = roundMacro((calories * distribution.protein) / 4)
+  const fat = roundMacro((calories * distribution.fat) / 9)
+  const carbs = roundMacro(Math.max(0, calories - protein * 4 - fat * 9) / 4)
+
+  return sanitizeNutrition({
+    calories,
+    protein,
+    carbs,
+    fat,
+  })
+}
+
 export function resolveGoals(settings: AppSettingsRecord): ResolvedGoals {
+  const bmr = calculateBmr(settings.profile)
+  const tdee = calculateTdee(settings.profile)
   const suggestedCalories = calculateSuggestedCalories(
     settings.profile,
     settings.goals.goalAdjustment,
@@ -78,14 +128,35 @@ export function resolveGoals(settings: AppSettingsRecord): ResolvedGoals {
       ? suggestedCalories
       : settings.goals.calorieGoal
 
+  const automaticMacros = calculateAutomaticMacroGoals(
+    calories,
+    settings.goals.goalAdjustment,
+  )
+
+  const protein =
+    settings.goals.macroMode === 'auto'
+      ? automaticMacros.protein
+      : settings.goals.proteinGoal
+  const carbs =
+    settings.goals.macroMode === 'auto' ? automaticMacros.carbs : settings.goals.carbsGoal
+  const fat =
+    settings.goals.macroMode === 'auto' ? automaticMacros.fat : settings.goals.fatGoal
+
+  const macroCalories = calculateMacroCalories({ protein, carbs, fat })
+
   return {
     calories,
-    protein: settings.goals.proteinGoal,
-    carbs: settings.goals.carbsGoal,
-    fat: settings.goals.fatGoal,
+    protein,
+    carbs,
+    fat,
     suggestedCalories,
+    bmr,
+    tdee,
     source:
       settings.goals.calorieMode === 'auto' && suggestedCalories ? 'auto' : 'manual',
+    macroMode: settings.goals.macroMode,
+    macroCalories,
+    calorieVariance: macroCalories - calories,
     goalAdjustment: settings.goals.goalAdjustment,
   }
 }

@@ -1,21 +1,31 @@
 import { LoaderCircle, PencilLine, Search, Sparkles } from 'lucide-react'
 import { useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { FoodEditorSheet } from '../../components/ui/food-editor-sheet'
 import { Card } from '../../components/ui/card'
 import { EmptyState } from '../../components/ui/empty-state'
 import { useAppStore } from '../../store/app-store'
-import type { FoodDraft } from '../../types/domain'
+import type { FoodDraft, MealKey } from '../../types/domain'
+import { MEAL_ORDER, mealLabels } from '../../types/domain'
 import { formatDate } from '../../utils/date'
 import { createBlankFood } from '../../utils/defaults'
 import { searchFoods } from '../../utils/openFoodFacts'
 
 export function SearchPage() {
-  const { addLogEntry, saveFavorite, selectedDate } = useAppStore()
+  const { addLogEntry, notify, saveFavorite, selectedDate } = useAppStore()
+  const [searchParams] = useSearchParams()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<FoodDraft[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string>()
   const [editorFood, setEditorFood] = useState<FoodDraft | null>(null)
+
+  const isFavoriteIntent = searchParams.get('intent') === 'favorite'
+  const requestedMealParam = searchParams.get('meal')
+  const requestedMeal =
+    requestedMealParam && MEAL_ORDER.includes(requestedMealParam as MealKey)
+      ? (requestedMealParam as MealKey)
+      : undefined
 
   async function handleSearch(event?: React.FormEvent<HTMLFormElement>) {
     event?.preventDefault()
@@ -69,6 +79,13 @@ export function SearchPage() {
       await saveFavorite(food, { custom: food.source === 'manual' })
     }
 
+    notify({
+      title: shouldSaveFavorite ? 'Added to log + saved favorite' : 'Added to your log',
+      description: shouldSaveFavorite
+        ? `${food.name} was added to ${mealLabels[meal].toLowerCase()} and saved for faster reuse.`
+        : `${food.name} was added to ${mealLabels[meal].toLowerCase()} on ${formatDate(selectedDate)}.`,
+    })
+
     setEditorFood(null)
   }
 
@@ -78,9 +95,24 @@ export function SearchPage() {
         <div>
           <p className="text-base font-semibold text-slate-950">Food search</p>
           <p className="text-sm text-slate-500">
-            Search by name, review the nutrition, then add it to {formatDate(selectedDate)}.
+            Search by name, review the nutrition, then add it to{' '}
+            {requestedMeal
+              ? `${mealLabels[requestedMeal].toLowerCase()} on ${formatDate(selectedDate)}`
+              : formatDate(selectedDate)}.
           </p>
         </div>
+
+        {isFavoriteIntent ? (
+          <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-900 ring-1 ring-emerald-100">
+            Favorite save mode is on — tap <span className="font-semibold">Save favorite</span> on any result, or add it to your log and save it from the review sheet.
+          </div>
+        ) : null}
+
+        {requestedMeal ? (
+          <div className="rounded-2xl bg-sky-50 px-4 py-3 text-sm text-sky-900 ring-1 ring-sky-100">
+            Quick log started from {mealLabels[requestedMeal].toLowerCase()}, so that meal is preselected in the review sheet.
+          </div>
+        ) : null}
 
         <form onSubmit={(event) => void handleSearch(event)} className="flex gap-3">
           <label className="relative flex-1">
@@ -184,9 +216,16 @@ export function SearchPage() {
                 <button
                   type="button"
                   onClick={() =>
-                    void saveFavorite(food, {
-                      custom: false,
-                    })
+                    void (async () => {
+                      await saveFavorite(food, {
+                        custom: false,
+                      })
+
+                      notify({
+                        title: 'Favorite saved',
+                        description: `${food.name} is ready in Saved for one-tap logging.`,
+                      })
+                    })()
                   }
                   className="button-secondary"
                 >
@@ -203,6 +242,7 @@ export function SearchPage() {
           open={Boolean(editorFood)}
           title="Add food to your log"
           initialFood={editorFood}
+          defaultMeal={requestedMeal}
           allowSaveFavorite
           onClose={() => setEditorFood(null)}
           onSubmit={handleSave}

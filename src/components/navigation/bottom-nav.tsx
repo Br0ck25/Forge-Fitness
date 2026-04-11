@@ -26,8 +26,8 @@ const items: NavItem[] = [
 
 export function BottomNav() {
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/70 bg-white/90 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-3 shadow-[0_-8px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-      <div className="mx-auto grid max-w-lg grid-cols-5 items-end gap-2">
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/70 bg-white/90 px-4 pb-[calc(1rem+env(safe-area-inset-bottom))] pt-2 shadow-[0_-8px_30px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+      <div className="mx-auto grid max-w-lg grid-cols-5 items-center gap-2">
         {items.map(({ emphasized, icon: Icon, label, to }) => (
           <NavLink
             key={to}
@@ -35,19 +35,38 @@ export function BottomNav() {
             end={to === '/'}
             className={({ isActive }) =>
               cn(
-                'flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-[11px] font-medium transition',
+                'flex flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2.5 text-[11px] font-medium transition',
                 emphasized
-                  ? 'rounded-[1.6rem] bg-emerald-500 px-3 py-3 text-white shadow-lg shadow-emerald-500/30 -translate-y-4'
+                  ? cn(
+                      'rounded-[1.8rem] px-3 py-3 text-white shadow-xl -mt-6',
+                      isActive
+                        ? 'bg-slate-950 ring-4 ring-emerald-100 shadow-slate-950/20'
+                        : 'bg-emerald-500 shadow-emerald-500/30',
+                    )
                   : isActive
-                    ? 'text-emerald-600'
-                    : 'text-slate-400',
+                    ? 'bg-emerald-50 text-emerald-700'
+                    : 'text-slate-400 hover:text-slate-600',
               )
             }
           >
             {({ isActive }) => (
               <>
-                <Icon className={cn('h-5 w-5', emphasized ? 'h-6 w-6' : '', isActive && !emphasized ? 'stroke-[2.4]' : '')} />
+                <Icon
+                  className={cn(
+                    'h-5 w-5',
+                    emphasized ? 'h-6 w-6' : '',
+                    isActive && !emphasized ? 'stroke-[2.4]' : '',
+                  )}
+                />
                 <span>{label}</span>
+                {!emphasized ? (
+                  <span
+                    className={cn(
+                      'h-1 w-1 rounded-full transition',
+                      isActive ? 'bg-emerald-500' : 'bg-transparent',
+                    )}
+                  />
+                ) : null}
               </>
             )}
           </NavLink>

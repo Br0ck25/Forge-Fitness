@@ -2,17 +2,20 @@ import {
   ChevronLeft,
   ChevronRight,
   Heart,
+  PencilLine,
   Plus,
   ScanLine,
   Search,
   UtensilsCrossed,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { FoodEditorSheet } from '../../components/ui/food-editor-sheet'
 import { MacroProgress } from '../../components/ui/macro-progress'
 import { MealSection } from '../../components/ui/meal-section'
 import { Card } from '../../components/ui/card'
+import { EmptyState } from '../../components/ui/empty-state'
+import { Modal } from '../../components/ui/modal'
 import { useAppStore } from '../../store/app-store'
 import type { FoodDraft, LogEntry, MealKey } from '../../types/domain'
 import { MEAL_ORDER, mealLabels } from '../../types/domain'
@@ -28,22 +31,26 @@ interface EditorState {
   entry?: LogEntry
 }
 
+interface QuickLogState {
+  meal: MealKey
+  view: 'menu' | 'favorites' | 'meals'
+}
+
 function QuickShortcut({
   icon: Icon,
   label,
   subtitle,
+  onClick,
   to,
 }: {
   icon: typeof Search
   label: string
   subtitle: string
-  to: string
+  to?: string
+  onClick?: () => void
 }) {
-  return (
-    <Link
-      to={to}
-      className="rounded-3xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:border-emerald-200 hover:shadow-md"
-    >
+  const content = (
+    <>
       <div className="flex items-center gap-3">
         <div className="rounded-2xl bg-emerald-50 p-3 text-emerald-600">
           <Icon className="h-5 w-5" />
@@ -53,17 +60,40 @@ function QuickShortcut({
           <p className="text-xs text-slate-500">{subtitle}</p>
         </div>
       </div>
-    </Link>
+    </>
+  )
+
+  if (to) {
+    return (
+      <Link
+        to={to}
+        className="rounded-3xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:border-emerald-200 hover:shadow-md"
+      >
+        {content}
+      </Link>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="rounded-3xl border border-slate-200 bg-white px-4 py-4 text-left shadow-sm transition hover:border-emerald-200 hover:shadow-md"
+    >
+      {content}
+    </button>
   )
 }
 
 export function HomePage() {
+  const navigate = useNavigate()
   const {
     addLogEntry,
     customMeals,
     deleteLogEntry,
     favorites,
     logEntries,
+    notify,
     saveFavorite,
     selectedDate,
     setSelectedDate,
@@ -72,6 +102,7 @@ export function HomePage() {
     moveLogEntry,
   } = useAppStore()
   const [editorState, setEditorState] = useState<EditorState | null>(null)
+  const [quickLogState, setQuickLogState] = useState<QuickLogState | null>(null)
 
   const dailyEntries = useMemo(
     () => logEntries.filter((entry) => entry.date === selectedDate),
@@ -82,6 +113,34 @@ export function HomePage() {
 
   const favoritePreview = favorites.slice(0, 4)
   const mealPreview = customMeals.slice(0, 3)
+
+  function openManualEntry(meal: MealKey) {
+    setQuickLogState(null)
+    setEditorState({
+      mode: 'add',
+      meal,
+      food: createBlankFood(),
+      quantity: 1,
+    })
+  }
+
+  function openQuickLog(meal: MealKey, view: QuickLogState['view'] = 'menu') {
+    setQuickLogState({ meal, view })
+  }
+
+  function closeQuickLog() {
+    setQuickLogState(null)
+  }
+
+  function openSearchForMeal(meal: MealKey) {
+    closeQuickLog()
+    navigate(`/search?meal=${encodeURIComponent(meal)}`)
+  }
+
+  function openScanForMeal(meal: MealKey) {
+    closeQuickLog()
+    navigate(`/scan?meal=${encodeURIComponent(meal)}`)
+  }
 
   async function handleSubmitEntry({
     food,
@@ -114,10 +173,20 @@ export function HomePage() {
       await saveFavorite(food, { custom: food.source === 'manual' })
     }
 
+    notify({
+      title: editorState?.mode === 'edit' ? 'Entry updated' : shouldSaveFavorite ? 'Added + saved favorite' : 'Food added',
+      description:
+        editorState?.mode === 'edit'
+          ? `${food.name} was updated in ${mealLabels[meal].toLowerCase()}.`
+          : shouldSaveFavorite
+            ? `${food.name} was added to ${mealLabels[meal].toLowerCase()} and saved for quick reuse.`
+            : `${food.name} was added to ${mealLabels[meal].toLowerCase()} on ${formatDate(selectedDate)}.`,
+    })
+
     setEditorState(null)
   }
 
-  async function handleQuickAddFavorite(favoriteId: string) {
+  async function handleQuickAddFavorite(favoriteId: string, meal = settings.preferredMeal) {
     const favorite = favorites.find((entry) => entry.id === favoriteId)
     if (!favorite) {
       return
@@ -125,33 +194,71 @@ export function HomePage() {
 
     await addLogEntry({
       date: selectedDate,
-      meal: settings.preferredMeal,
+      meal,
       food: favorite,
       quantity: 1,
       sourceType: 'favorite',
       favoriteId: favorite.id,
     })
+
+    notify({
+      title: 'Favorite added',
+      description: `${favorite.name} was added to ${mealLabels[meal].toLowerCase()}.`,
+    })
   }
 
-  async function handleQuickAddMeal(mealId: string) {
-    const meal = customMeals.find((entry) => entry.id === mealId)
-    if (!meal) {
+  async function handleQuickAddMeal(mealId: string, targetMeal = settings.preferredMeal) {
+    const savedMeal = customMeals.find((entry) => entry.id === mealId)
+    if (!savedMeal) {
       return
     }
 
     await addLogEntry({
       date: selectedDate,
-      meal: settings.preferredMeal,
+      meal: targetMeal,
       food: {
-        ...meal.totals,
-        name: meal.name,
-        servingSize: meal.servingSize,
+        ...savedMeal.totals,
+        name: savedMeal.name,
+        servingSize: savedMeal.servingSize,
         source: 'custom-meal',
-        notes: `${meal.items.length} item meal`,
+        notes: `${savedMeal.items.length} item meal`,
       },
       quantity: 1,
       sourceType: 'meal',
-      mealId: meal.id,
+      mealId: savedMeal.id,
+    })
+
+    notify({
+      title: 'Meal added',
+      description: `${savedMeal.name} was added to ${mealLabels[targetMeal].toLowerCase()}.`,
+    })
+  }
+
+  async function handleDeleteEntry(entry: LogEntry) {
+    const confirmed = window.confirm(`Delete ${entry.item.name} from your log?`)
+    if (!confirmed) {
+      return
+    }
+
+    await deleteLogEntry(entry.id)
+    notify({
+      title: 'Entry deleted',
+      description: `${entry.item.name} was removed from ${mealLabels[entry.meal].toLowerCase()}.`,
+      tone: 'info',
+    })
+  }
+
+  async function handleMoveEntry(entryId: string, nextMeal: MealKey) {
+    const entry = dailyEntries.find((item) => item.id === entryId)
+    if (!entry || entry.meal === nextMeal) {
+      return
+    }
+
+    await moveLogEntry(entryId, nextMeal)
+    notify({
+      title: 'Entry moved',
+      description: `${entry.item.name} was moved to ${mealLabels[nextMeal].toLowerCase()}.`,
+      tone: 'info',
     })
   }
 
@@ -168,7 +275,9 @@ export function HomePage() {
           <div>
             <p className="text-sm font-medium text-emerald-100">Daily dashboard</p>
             <p className="text-3xl font-semibold tracking-tight">{summary.consumed.calories} kcal</p>
-            <p className="mt-1 text-sm text-emerald-100/90">{remainingLabel}</p>
+            <p className="mt-1 text-sm text-emerald-100/90">
+              {remainingLabel} · {goals.source === 'auto' ? 'Auto calorie target' : 'Manual calorie target'}
+            </p>
           </div>
           <div className="rounded-3xl bg-white/10 px-4 py-3 text-right backdrop-blur">
             <p className="text-xs uppercase tracking-[0.22em] text-emerald-100/80">Goal</p>
@@ -218,18 +327,15 @@ export function HomePage() {
         <div className="flex items-center justify-between gap-3">
           <div>
             <p className="text-base font-semibold text-slate-950">Macros</p>
-            <p className="text-sm text-slate-500">Stay on target without the spreadsheet vibes.</p>
+            <p className="text-sm text-slate-500">
+              {goals.macroMode === 'auto'
+                ? 'Auto-balanced to match your calorie target.'
+                : 'Tracking against your manual macro goals.'}
+            </p>
           </div>
           <button
             type="button"
-            onClick={() =>
-              setEditorState({
-                mode: 'add',
-                meal: settings.preferredMeal,
-                food: createBlankFood(),
-                quantity: 1,
-              })
-            }
+            onClick={() => openQuickLog(settings.preferredMeal)}
             className="button-secondary"
           >
             <Plus className="h-4 w-4" />
@@ -259,28 +365,34 @@ export function HomePage() {
 
       <div className="grid grid-cols-2 gap-3">
         <QuickShortcut
-          to="/scan"
+          icon={PencilLine}
+          label="Manual"
+          subtitle="Quick entry"
+          onClick={() => openManualEntry(settings.preferredMeal)}
+        />
+        <QuickShortcut
           icon={ScanLine}
           label="Scan"
           subtitle="Barcode logging"
+          onClick={() => openScanForMeal(settings.preferredMeal)}
         />
         <QuickShortcut
-          to="/search"
           icon={Search}
           label="Search"
           subtitle="Find foods fast"
+          onClick={() => openSearchForMeal(settings.preferredMeal)}
         />
         <QuickShortcut
-          to="/saved"
           icon={Heart}
           label="Favorites"
           subtitle="One-tap repeats"
+          onClick={() => openQuickLog(settings.preferredMeal, 'favorites')}
         />
         <QuickShortcut
-          to="/saved"
           icon={UtensilsCrossed}
           label="Meals"
           subtitle="Reuse combos"
+          onClick={() => openQuickLog(settings.preferredMeal, 'meals')}
         />
       </div>
 
@@ -353,14 +465,7 @@ export function HomePage() {
             key={meal}
             meal={meal}
             entries={dailyEntries.filter((entry) => entry.meal === meal)}
-            onAdd={() =>
-              setEditorState({
-                mode: 'add',
-                meal,
-                food: createBlankFood(),
-                quantity: 1,
-              })
-            }
+            onAdd={() => openQuickLog(meal)}
             onEdit={(entry) =>
               setEditorState({
                 mode: 'edit',
@@ -370,8 +475,13 @@ export function HomePage() {
                 entry,
               })
             }
-            onDelete={(entryId) => void deleteLogEntry(entryId)}
-            onMove={(entryId, nextMeal) => void moveLogEntry(entryId, nextMeal)}
+            onDelete={(entryId) => {
+              const entry = dailyEntries.find((item) => item.id === entryId)
+              if (entry) {
+                void handleDeleteEntry(entry)
+              }
+            }}
+            onMove={(entryId, nextMeal) => void handleMoveEntry(entryId, nextMeal)}
           />
         ))}
       </div>
@@ -388,6 +498,177 @@ export function HomePage() {
           onClose={() => setEditorState(null)}
           onSubmit={handleSubmitEntry}
         />
+      ) : null}
+
+      {quickLogState?.view === 'menu' ? (
+        <Modal
+          open={Boolean(quickLogState)}
+          title={`Quick log for ${mealLabels[quickLogState.meal]}`}
+          onClose={closeQuickLog}
+          footer={
+            <button type="button" onClick={closeQuickLog} className="button-secondary w-full justify-center">
+              Cancel
+            </button>
+          }
+        >
+          <p className="text-sm text-slate-500">
+            Choose the fastest way to add something to {mealLabels[quickLogState.meal].toLowerCase()}.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <button type="button" onClick={() => openManualEntry(quickLogState.meal)} className="button-secondary min-h-24 flex-col text-center">
+              <PencilLine className="h-5 w-5" />
+              Manual entry
+            </button>
+            <button type="button" onClick={() => openScanForMeal(quickLogState.meal)} className="button-secondary min-h-24 flex-col text-center">
+              <ScanLine className="h-5 w-5" />
+              Barcode scanner
+            </button>
+            <button type="button" onClick={() => openSearchForMeal(quickLogState.meal)} className="button-secondary min-h-24 flex-col text-center">
+              <Search className="h-5 w-5" />
+              Search foods
+            </button>
+            <button type="button" onClick={() => openQuickLog(quickLogState.meal, 'favorites')} className="button-secondary min-h-24 flex-col text-center">
+              <Heart className="h-5 w-5" />
+              Choose favorite
+            </button>
+            <button type="button" onClick={() => openQuickLog(quickLogState.meal, 'meals')} className="button-secondary col-span-2 min-h-24 flex-col text-center">
+              <UtensilsCrossed className="h-5 w-5" />
+              Choose meal
+            </button>
+          </div>
+        </Modal>
+      ) : null}
+
+      {quickLogState?.view === 'favorites' ? (
+        <Modal
+          open={Boolean(quickLogState)}
+          title={`Favorites for ${mealLabels[quickLogState.meal]}`}
+          onClose={closeQuickLog}
+          footer={
+            <div className="flex gap-3">
+              <button type="button" onClick={() => openQuickLog(quickLogState.meal)} className="button-secondary flex-1 justify-center">
+                Back
+              </button>
+              <button type="button" onClick={closeQuickLog} className="button-secondary flex-1 justify-center">
+                Close
+              </button>
+            </div>
+          }
+        >
+          {favorites.length === 0 ? (
+            <EmptyState
+              title="No favorites saved yet"
+              description="Save foods first, then you can add them here in one tap."
+              action={
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeQuickLog()
+                    navigate('/saved')
+                  }}
+                  className="button-primary"
+                >
+                  Open Saved
+                </button>
+              }
+            />
+          ) : (
+            <div className="space-y-3">
+              {favorites.map((favorite) => (
+                <button
+                  key={favorite.id}
+                  type="button"
+                  onClick={() =>
+                    void (async () => {
+                      await handleQuickAddFavorite(favorite.id, quickLogState.meal)
+                      closeQuickLog()
+                    })()
+                  }
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-emerald-200 hover:shadow-md"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-950">{favorite.name}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {favorite.brand || 'Saved favorite'} · {favorite.servingSize}
+                      </p>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-900">{favorite.calories} kcal</p>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">
+                    P {favorite.protein} · C {favorite.carbs} · F {favorite.fat}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
+        </Modal>
+      ) : null}
+
+      {quickLogState?.view === 'meals' ? (
+        <Modal
+          open={Boolean(quickLogState)}
+          title={`Meals for ${mealLabels[quickLogState.meal]}`}
+          onClose={closeQuickLog}
+          footer={
+            <div className="flex gap-3">
+              <button type="button" onClick={() => openQuickLog(quickLogState.meal)} className="button-secondary flex-1 justify-center">
+                Back
+              </button>
+              <button type="button" onClick={closeQuickLog} className="button-secondary flex-1 justify-center">
+                Close
+              </button>
+            </div>
+          }
+        >
+          {customMeals.length === 0 ? (
+            <EmptyState
+              title="No reusable meals yet"
+              description="Build a saved meal first, then you can add it here in one tap."
+              action={
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeQuickLog()
+                    navigate('/saved')
+                  }}
+                  className="button-primary"
+                >
+                  Open Saved
+                </button>
+              }
+            />
+          ) : (
+            <div className="space-y-3">
+              {customMeals.map((meal) => (
+                <button
+                  key={meal.id}
+                  type="button"
+                  onClick={() =>
+                    void (async () => {
+                      await handleQuickAddMeal(meal.id, quickLogState.meal)
+                      closeQuickLog()
+                    })()
+                  }
+                  className="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left shadow-sm transition hover:border-emerald-200 hover:shadow-md"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-slate-950">{meal.name}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {meal.items.length} items · {meal.servingSize}
+                      </p>
+                    </div>
+                    <p className="text-sm font-semibold text-slate-900">{meal.totals.calories} kcal</p>
+                  </div>
+                  <p className="mt-2 text-xs text-slate-500">
+                    P {meal.totals.protein} · C {meal.totals.carbs} · F {meal.totals.fat}
+                  </p>
+                </button>
+              ))}
+            </div>
+          )}
+        </Modal>
       ) : null}
     </>
   )

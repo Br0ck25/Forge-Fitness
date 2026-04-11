@@ -7,9 +7,11 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react'
 import type {
+  AppNotice,
   AppSettingsRecord,
   CustomMeal,
   FavoriteFood,
@@ -21,6 +23,7 @@ import type {
   UnitSettings,
 } from '../types/domain'
 import { toDateKey } from '../utils/date'
+import { createBackupFile, parseBackupFile, type AppBackupFile } from '../utils/backup'
 import { createId } from '../utils/id'
 import { calculateCustomMealTotals } from '../utils/nutrition'
 import {
@@ -33,8 +36,6 @@ import {
   subscribePersistedAppState,
   type PersistedAppState,
 } from './local-storage'
-
-const FIRST_VISIT_KEY = 'forge-fitness:first-visit-complete'
 
 interface AddLogEntryInput {
   date?: string
@@ -59,11 +60,21 @@ interface AppStoreValue {
   favorites: FavoriteFood[]
   customMeals: CustomMeal[]
   logEntries: LogEntry[]
+  notices: AppNotice[]
   selectedDate: string
   setSelectedDate: (date: string) => void
   isFirstVisitOpen: boolean
   openFirstVisitModal: () => void
   dismissFirstVisitModal: () => void
+  dismissNotice: (id: string) => void
+  notify: (notice: {
+    title: string
+    description?: string
+    tone?: AppNotice['tone']
+    durationMs?: number
+  }) => string
+  exportBackup: () => AppBackupFile
+  importBackup: (payload: unknown) => Promise<AppBackupFile>
   completeFirstVisit: (profile?: Profile) => Promise<void>
   updateProfile: (profile: Profile) => Promise<void>
   updateGoals: (goals: Partial<GoalSettings>) => Promise<void>
@@ -84,10 +95,64 @@ interface AppStoreValue {
 
 const AppStoreContext = createContext<AppStoreValue | undefined>(undefined)
 
+const FIRST_VISIT_KEY = 'forge-fitness:first-visit-complete'
+const DEFAULT_NOTICE_DURATION = 3200
+
+function readFirstVisitComplete() {
+  if (typeof window === 'undefined') {
+    return false
+  }
+
+  try {
+    return window.localStorage.getItem(FIRST_VISIT_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function writeFirstVisitComplete(isComplete: boolean) {
+  if (typeof window === 'undefined') {
+    return
+  }
+
+  try {
+    if (isComplete) {
+      window.localStorage.setItem(FIRST_VISIT_KEY, 'true')
+      return
+    }
+
+    window.localStorage.removeItem(FIRST_VISIT_KEY)
+  } catch {
+    // Ignore storage errors.
+  }
+}
+
 function upsertByUpdatedAt<T extends { id: string; updatedAt: number }>(items: T[], nextItem: T) {
   return [nextItem, ...items.filter((item) => item.id !== nextItem.id)].sort(
     (left, right) => right.updatedAt - left.updatedAt,
   )
+}
+
+function sanitizeFoodDraft(food: FoodDraft) {
+  return {
+    ...food,
+    name: food.name.trim(),
+    brand: food.brand?.trim() || undefined,
+    servingSize: food.servingSize.trim() || '1 serving',
+    barcode: food.barcode?.trim() || undefined,
+    imageUrl: food.imageUrl?.trim() || undefined,
+    notes: food.notes?.trim() || undefined,
+  } satisfies FoodDraft
+}
+
+function toMealLogFood(meal: CustomMeal): FoodDraft {
+  return {
+    ...meal.totals,
+    name: meal.name,
+    servingSize: meal.servingSize,
+    source: 'custom-meal',
+    notes: `${meal.items.length} item meal`,
+  }
 }
 
 function updatePreferredMealInState(state: PersistedAppState, meal: MealKey) {
@@ -107,22 +172,87 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   const [persistedState, setPersistedState] = useState<PersistedAppState>(() =>
     loadPersistedAppState(),
   )
-  const [isFirstVisitOpen, setIsFirstVisitOpen] = useState(() => {
-    try {
-      return localStorage.getItem(FIRST_VISIT_KEY) !== 'true'
-    } catch {
-      return false
+  const [isFirstVisitComplete, setIsFirstVisitComplete] = useState(() => readFirstVisitComplete())
+  const [isFirstVisitOpen, setIsFirstVisitOpen] = useState(() => !readFirstVisitComplete())
+  const [notices, setNotices] = useState<AppNotice[]>([])
+  const noticeTimeoutsRef = useRef(new Map<string, number>())
+  const saveErrorShownRef = useRef(false)
+
+  const dismissNotice = useCallback((id: string) => {
+    const timeoutId = noticeTimeoutsRef.current.get(id)
+    if (timeoutId) {
+      window.clearTimeout(timeoutId)
+      noticeTimeoutsRef.current.delete(id)
     }
-  })
+
+    setNotices((current) => current.filter((notice) => notice.id !== id))
+  }, [])
+
+  const notify = useCallback(
+    ({ description, durationMs = DEFAULT_NOTICE_DURATION, title, tone = 'success' }: {
+      title: string
+      description?: string
+      tone?: AppNotice['tone']
+      durationMs?: number
+    }) => {
+      const id = createId('notice')
+
+      setNotices((current) => [...current, { id, title, description, tone }])
+
+      if (typeof window !== 'undefined' && durationMs > 0) {
+        const timeoutId = window.setTimeout(() => {
+          dismissNotice(id)
+        }, durationMs)
+
+        noticeTimeoutsRef.current.set(id, timeoutId)
+      }
+
+      return id
+    },
+    [dismissNotice],
+  )
 
   useEffect(() => {
-    savePersistedAppState(persistedState)
-  }, [persistedState])
+    const saved = savePersistedAppState(persistedState)
+
+    if (saved) {
+      saveErrorShownRef.current = false
+      return undefined
+    }
+
+    if (!saveErrorShownRef.current) {
+      saveErrorShownRef.current = true
+      const timeoutId = window.setTimeout(() => {
+        notify({
+          title: 'Could not save locally',
+          description:
+            'Your latest change could not be written to browser storage. Free up space and try again.',
+          tone: 'error',
+          durationMs: 6000,
+        })
+      }, 0)
+
+      return () => window.clearTimeout(timeoutId)
+    }
+
+    return undefined
+  }, [notify, persistedState])
 
   useEffect(() => {
     return subscribePersistedAppState(() => {
       setPersistedState(loadPersistedAppState())
     })
+  }, [])
+
+  useEffect(() => {
+    const noticeTimeouts = noticeTimeoutsRef.current
+
+    return () => {
+      noticeTimeouts.forEach((timeoutId) => {
+        window.clearTimeout(timeoutId)
+      })
+      noticeTimeouts.clear()
+    }
   }, [])
 
   const mutateSettings = useCallback(
@@ -198,6 +328,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       mealId,
     }: AddLogEntryInput) => {
       let entry!: LogEntry
+      const nextFood = sanitizeFoodDraft(food)
 
       setPersistedState((current) => {
         const now = Date.now()
@@ -206,7 +337,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
           date,
           meal,
           quantity,
-          item: food,
+          item: nextFood,
           sourceType,
           favoriteId,
           mealId,
@@ -239,9 +370,12 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
           return current
         }
 
+        const nextItem = updates.item ? sanitizeFoodDraft(updates.item) : existing.item
+
         const nextEntry: LogEntry = {
           ...existing,
           ...updates,
+          item: nextItem,
           updatedAt: Date.now(),
         }
 
@@ -274,6 +408,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   const saveFavorite = useCallback(
     async (food: FoodDraft, options?: { id?: string; custom?: boolean }) => {
       let favorite!: FavoriteFood
+      const nextFood = sanitizeFoodDraft(food)
 
       setPersistedState((current) => {
         const existing = options?.id
@@ -282,9 +417,9 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
         const now = Date.now()
 
         favorite = {
-          ...food,
+          ...nextFood,
           id: options?.id ?? createId('fav'),
-          custom: options?.custom ?? food.source === 'manual',
+          custom: options?.custom ?? nextFood.source === 'manual',
           createdAt: existing?.createdAt ?? now,
           updatedAt: now,
           source: 'favorite',
@@ -317,12 +452,19 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
           ? current.customMeals.find((item) => item.id === meal.id)
           : undefined
         const now = Date.now()
-        const totals = calculateCustomMealTotals(meal.items)
+        const items = meal.items
+          .map((item) => ({
+            ...item,
+            quantity: item.quantity > 0 ? item.quantity : 1,
+            food: sanitizeFoodDraft(item.food),
+          }))
+          .filter((item) => item.food.name)
+        const totals = calculateCustomMealTotals(items)
 
         record = {
           id: meal.id ?? createId('meal'),
-          name: meal.name,
-          items: meal.items,
+          name: meal.name.trim(),
+          items,
           totals,
           servingSize: meal.servingSize?.trim() || '1 meal',
           createdAt: existing?.createdAt ?? now,
@@ -360,13 +502,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   const quickAddMeal = useCallback(async (meal: CustomMeal) => {
     await addLogEntry({
       meal: persistedState.settings.preferredMeal,
-      food: {
-        ...meal.totals,
-        name: meal.name,
-        servingSize: meal.servingSize,
-        source: 'custom-meal',
-        notes: `${meal.items.length} item meal`,
-      },
+      food: toMealLogFood(meal),
       quantity: 1,
       sourceType: 'meal',
       mealId: meal.id,
@@ -378,11 +514,8 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   }, [])
 
   const dismissFirstVisitModal = useCallback(() => {
-    try {
-      localStorage.setItem(FIRST_VISIT_KEY, 'true')
-    } catch {
-      // Ignore storage errors.
-    }
+    writeFirstVisitComplete(true)
+    setIsFirstVisitComplete(true)
     setIsFirstVisitOpen(false)
   }, [])
 
@@ -391,25 +524,39 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       await updateProfile(profile)
     }
 
-    try {
-      localStorage.setItem(FIRST_VISIT_KEY, 'true')
-    } catch {
-      // Ignore storage errors.
-    }
-
+    writeFirstVisitComplete(true)
+    setIsFirstVisitComplete(true)
     setIsFirstVisitOpen(false)
   }, [updateProfile])
+
+  const exportBackup = useCallback(() => {
+    return createBackupFile({
+      appVersion: __APP_VERSION__,
+      state: persistedState,
+      ui: {
+        selectedDate,
+        firstVisitComplete: isFirstVisitComplete,
+      },
+    })
+  }, [isFirstVisitComplete, persistedState, selectedDate])
+
+  const importBackup = useCallback(async (payload: unknown) => {
+    const backup = parseBackupFile(payload)
+
+    setPersistedState(backup.state)
+    setSelectedDate(backup.ui.selectedDate)
+    writeFirstVisitComplete(backup.ui.firstVisitComplete)
+    setIsFirstVisitComplete(backup.ui.firstVisitComplete)
+    setIsFirstVisitOpen(!backup.ui.firstVisitComplete)
+
+    return backup
+  }, [])
 
   const resetAllData = useCallback(async () => {
     clearPersistedAppState()
     setPersistedState(createDefaultPersistedState())
-
-    try {
-      localStorage.removeItem(FIRST_VISIT_KEY)
-    } catch {
-      // Ignore storage errors.
-    }
-
+    writeFirstVisitComplete(false)
+    setIsFirstVisitComplete(false)
     setSelectedDate(toDateKey())
     setIsFirstVisitOpen(true)
   }, [])
@@ -420,11 +567,16 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     favorites: persistedState.favorites,
     customMeals: persistedState.customMeals,
     logEntries: persistedState.logEntries,
+    notices,
     selectedDate,
     setSelectedDate,
     isFirstVisitOpen,
     openFirstVisitModal,
     dismissFirstVisitModal,
+    dismissNotice,
+    notify,
+    exportBackup,
+    importBackup,
     completeFirstVisit,
     updateProfile,
     updateGoals,
@@ -447,9 +599,14 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     deleteCustomMeal,
     deleteFavorite,
     deleteLogEntry,
+    dismissNotice,
     dismissFirstVisitModal,
+    exportBackup,
+    importBackup,
     isFirstVisitOpen,
     moveLogEntry,
+    notices,
+    notify,
     openFirstVisitModal,
     persistedState,
     quickAddFavorite,

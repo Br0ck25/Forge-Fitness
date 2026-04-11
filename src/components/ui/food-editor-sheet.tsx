@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { FoodDraft, MealKey } from '../../types/domain'
 import { MEAL_ORDER, mealLabels } from '../../types/domain'
+import { calculateMacroCalories } from '../../utils/calculations'
 import { Modal } from './modal'
 
 interface FoodEditorSheetProps {
@@ -40,6 +41,10 @@ export function FoodEditorSheet({
   const [meal, setMeal] = useState<MealKey>(defaultMeal)
   const [saveFavorite, setSaveFavorite] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
+
+  const macroCalories = calculateMacroCalories(food)
+  const calorieDifference = macroCalories - food.calories
+  const hasMacroInput = food.protein > 0 || food.carbs > 0 || food.fat > 0
 
   useEffect(() => {
     if (!open) {
@@ -193,6 +198,32 @@ export function FoodEditorSheet({
             className="input-field"
           />
         </label>
+
+        {hasMacroInput ? (
+          <div className="sm:col-span-2 rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-700 ring-1 ring-slate-200">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="font-semibold text-slate-900">Macro math</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  Protein, carbs, and fat add up to {macroCalories} kcal.
+                </p>
+              </div>
+              {Math.abs(calorieDifference) > 5 ? (
+                <button
+                  type="button"
+                  onClick={() => setFood((current) => ({ ...current, calories: macroCalories }))}
+                  className="button-secondary"
+                >
+                  Use {macroCalories} kcal
+                </button>
+              ) : (
+                <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">
+                  Calories in sync
+                </span>
+              )}
+            </div>
+          </div>
+        ) : null}
 
         {showQuantity ? (
           <label>

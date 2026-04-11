@@ -1,11 +1,13 @@
 import { Flashlight, LoaderCircle, RefreshCcw, ScanLine, Search, ShieldAlert } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { FoodEditorSheet } from '../../components/ui/food-editor-sheet'
 import { Card } from '../../components/ui/card'
 import { EmptyState } from '../../components/ui/empty-state'
 import { useBarcodeScanner } from '../../hooks/use-barcode-scanner'
 import { useAppStore } from '../../store/app-store'
 import type { FoodDraft, MealKey } from '../../types/domain'
+import { MEAL_ORDER, mealLabels } from '../../types/domain'
 import { formatDate } from '../../utils/date'
 import { createBlankFood } from '../../utils/defaults'
 import { lookupBarcode } from '../../utils/openFoodFacts'
@@ -18,10 +20,18 @@ interface LookupState {
 }
 
 export function ScanPage() {
-  const { addLogEntry, saveFavorite, selectedDate } = useAppStore()
+  const { addLogEntry, notify, saveFavorite, selectedDate } = useAppStore()
+  const [searchParams] = useSearchParams()
   const [manualBarcode, setManualBarcode] = useState('')
   const [lookupState, setLookupState] = useState<LookupState>({ loading: false })
   const [editorFood, setEditorFood] = useState<FoodDraft | null>(null)
+
+  const isFavoriteIntent = searchParams.get('intent') === 'favorite'
+  const requestedMealParam = searchParams.get('meal')
+  const requestedMeal =
+    requestedMealParam && MEAL_ORDER.includes(requestedMealParam as MealKey)
+      ? (requestedMealParam as MealKey)
+      : undefined
 
   const handleLookup = useCallback(async (rawBarcode: string) => {
     const barcode = rawBarcode.trim()
@@ -111,6 +121,13 @@ export function ScanPage() {
       await saveFavorite(food, { custom: food.source === 'manual' })
     }
 
+    notify({
+      title: shouldSaveFavorite ? 'Scanned, logged, and saved' : 'Scanned item added',
+      description: shouldSaveFavorite
+        ? `${food.name} was added to ${mealLabels[meal].toLowerCase()} and saved as a favorite.`
+        : `${food.name} was added to ${mealLabels[meal].toLowerCase()} on ${formatDate(selectedDate)}.`,
+    })
+
     setEditorFood(null)
     setLookupState({ loading: false })
     void restart()
@@ -129,9 +146,24 @@ export function ScanPage() {
         <div>
           <p className="text-base font-semibold text-slate-950">Barcode scanner</p>
           <p className="text-sm text-slate-500">
-            Scan with your camera, review the result, then add it to {formatDate(selectedDate)}.
+            Scan with your camera, review the result, then add it to{' '}
+            {requestedMeal
+              ? `${mealLabels[requestedMeal].toLowerCase()} on ${formatDate(selectedDate)}`
+              : formatDate(selectedDate)}.
           </p>
         </div>
+
+        {isFavoriteIntent ? (
+          <div className="rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-900 ring-1 ring-emerald-100">
+            Favorite save mode is on — after the lookup, turn on <span className="font-semibold">Save to favorites</span> in the review sheet if you want to keep it.
+          </div>
+        ) : null}
+
+        {requestedMeal ? (
+          <div className="rounded-2xl bg-sky-50 px-4 py-3 text-sm text-sky-900 ring-1 ring-sky-100">
+            Quick log started from {mealLabels[requestedMeal].toLowerCase()}, so that meal is preselected in the review sheet.
+          </div>
+        ) : null}
 
         <div className="relative overflow-hidden rounded-4xl bg-slate-950">
           <video
@@ -240,6 +272,7 @@ export function ScanPage() {
           open={Boolean(editorFood)}
           title="Review scanned food"
           initialFood={editorFood}
+          defaultMeal={requestedMeal}
           allowSaveFavorite
           onClose={() => {
             setEditorFood(null)
