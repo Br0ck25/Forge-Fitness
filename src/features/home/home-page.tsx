@@ -40,7 +40,7 @@ interface QuickLogState {
 
 interface WeightEditorState {
   entry?: WeightEntry
-  weight: number
+  weightText: string
 }
 
 function QuickShortcut({
@@ -150,13 +150,14 @@ export function HomePage() {
   }
 
   function openWeightEntry(entry?: WeightEntry) {
-    const currentWeightKg = entry?.weightKg ?? settings.profile.weightKg ?? 0
-    const initialWeight = settings.units.weight === 'lb'
-      ? Math.round(kgToLb(currentWeightKg) * 10) / 10
-      : Math.round(currentWeightKg * 10) / 10
+    const initialWeightText = entry
+      ? settings.units.weight === 'lb'
+        ? String(Math.round(kgToLb(entry.weightKg) * 10) / 10)
+        : String(Math.round(entry.weightKg * 10) / 10)
+      : '0'
 
     setQuickLogState(null)
-    setWeightEditorState({ entry, weight: initialWeight })
+    setWeightEditorState({ entry, weightText: initialWeightText })
   }
 
   async function handleSubmitWeight() {
@@ -164,8 +165,8 @@ export function HomePage() {
       return
     }
 
-    const enteredWeight = weightEditorState.weight
-    if (!(enteredWeight > 0)) {
+    const enteredWeight = Number(weightEditorState.weightText)
+    if (!Number.isFinite(enteredWeight) || enteredWeight <= 0) {
       return
     }
 
@@ -691,10 +692,10 @@ export function HomePage() {
               type="number"
               min="0"
               step="0.1"
-              value={weightEditorState.weight}
+              value={weightEditorState.weightText}
               onChange={(event) => setWeightEditorState({
                 ...weightEditorState,
-                weight: Number(event.target.value),
+                weightText: event.target.value,
               })}
               className="w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-lg font-semibold text-slate-950 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
             />

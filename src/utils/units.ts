@@ -31,13 +31,17 @@ export function feetAndInchesToCm(feet: number, inches: number) {
 }
 
 export function formatWeight(weightKg: number | undefined, unit: WeightUnit) {
-  if (!weightKg) {
+  if (weightKg == null || weightKg <= 0) {
     return '—'
   }
 
-  return unit === 'lb'
-    ? `${Math.round(kgToLb(weightKg))} lb`
-    : `${Math.round(weightKg * 10) / 10} kg`
+  if (unit === 'lb') {
+    const rounded = Math.round(kgToLb(weightKg) * 10) / 10
+    return `${rounded.toFixed(rounded % 1 === 0 ? 0 : 1)} lb`
+  }
+
+  const rounded = Math.round(weightKg * 10) / 10
+  return `${rounded.toFixed(rounded % 1 === 0 ? 0 : 1)} kg`
 }
 
 export function formatHeight(heightCm: number | undefined, unit: HeightUnit) {
