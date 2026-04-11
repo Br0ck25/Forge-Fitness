@@ -81,6 +81,7 @@ interface AppStoreValue {
   updateProfile: (profile: Profile) => Promise<void>
   updateGoals: (goals: Partial<GoalSettings>) => Promise<void>
   updateUnits: (units: Partial<UnitSettings>) => Promise<void>
+  updateBackupReminder: (reminder: AppSettingsRecord['backupReminder']) => Promise<void>
   updatePreferredMeal: (meal: MealKey) => Promise<void>
   addLogEntry: (input: AddLogEntryInput) => Promise<LogEntry>
   updateLogEntry: (id: string, updates: Partial<Pick<LogEntry, 'meal' | 'quantity' | 'item'>>) => Promise<void>
@@ -310,6 +311,16 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
           ...current.units,
           ...units,
         },
+      }))
+    },
+    [mutateSettings],
+  )
+
+  const updateBackupReminder = useCallback(
+    async (backupReminder: AppSettingsRecord['backupReminder']) => {
+      await mutateSettings((current) => ({
+        ...current,
+        backupReminder,
       }))
     },
     [mutateSettings],
@@ -645,6 +656,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     updateProfile,
     updateGoals,
     updateUnits,
+    updateBackupReminder,
     updatePreferredMeal,
     addLogEntry,
     updateLogEntry,
@@ -687,6 +699,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     updateProfile,
     updatePreferredMeal,
     updateUnits,
+    updateBackupReminder,
     addWeightEntry,
     updateWeightEntry,
     deleteWeightEntry,

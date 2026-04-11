@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { Profile, UnitSettings } from '../../types/domain'
 import { activityLabels } from '../../types/domain'
 import {
@@ -33,6 +34,15 @@ export function ProfileFields({ onChange, profile, units }: ProfileFieldsProps) 
       ? Math.round(kgToLb(profile.weightKg) * 10) / 10
       : Math.round(profile.weightKg * 10) / 10
     : ''
+
+  const [weightText, setWeightText] = useState<string>(String(displayWeight))
+  const [weightFocused, setWeightFocused] = useState(false)
+
+  useEffect(() => {
+    if (!weightFocused) {
+      setWeightText(displayWeight === '' ? '' : String(displayWeight))
+    }
+  }, [displayWeight, weightFocused])
 
   return (
     <div className="grid gap-4 sm:grid-cols-2">
@@ -137,9 +147,16 @@ export function ProfileFields({ onChange, profile, units }: ProfileFieldsProps) 
           min="0"
           step="0.1"
           inputMode="decimal"
-          value={displayWeight}
+          value={weightText}
+          onFocus={() => setWeightFocused(true)}
+          onBlur={() => {
+            setWeightFocused(false)
+            setWeightText(displayWeight === '' ? '' : String(displayWeight))
+          }}
           onChange={(event) => {
-            const parsed = parseOptionalNumber(event.target.value)
+            const nextText = event.target.value
+            setWeightText(nextText)
+            const parsed = parseOptionalNumber(nextText)
             onChange({
               ...profile,
               weightKg:

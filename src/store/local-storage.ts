@@ -38,6 +38,7 @@ export function defaultSettings(): AppSettingsRecord {
       weight: 'kg',
       height: 'cm',
     },
+    backupReminder: 'off',
     preferredMeal: 'snacks',
     updatedAt: Date.now(),
   }
@@ -141,6 +142,12 @@ function normalizeSettings(value: unknown): AppSettingsRecord {
       weight: units.weight === 'lb' ? 'lb' : 'kg',
       height: units.height === 'ft-in' ? 'ft-in' : 'cm',
     },
+    backupReminder:
+      value.backupReminder === 'daily' ||
+      value.backupReminder === 'weekly' ||
+      value.backupReminder === 'monthly'
+        ? value.backupReminder
+        : defaults.backupReminder,
     preferredMeal: toMealKey(value.preferredMeal, defaults.preferredMeal),
     updatedAt: toNumber(value.updatedAt, defaults.updatedAt),
   }

@@ -107,6 +107,15 @@ function NumberInput({
   step?: number
   disabled?: boolean
 }) {
+  const [textValue, setTextValue] = useState(String(value))
+  const [isFocused, setIsFocused] = useState(false)
+
+  useEffect(() => {
+    if (!isFocused) {
+      setTextValue(String(value))
+    }
+  }, [value, isFocused])
+
   return (
     <label>
       <span className="mb-2 block text-sm font-medium text-slate-700">{label}</span>
@@ -116,9 +125,26 @@ function NumberInput({
           min="0"
           step={step}
           inputMode={step === 1 ? 'numeric' : 'decimal'}
-          value={value}
+          value={textValue}
           disabled={disabled}
-          onChange={(event) => onChange(Math.max(0, Number(event.target.value) || 0))}
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => {
+            setIsFocused(false)
+            setTextValue(String(value))
+          }}
+          onChange={(event) => {
+            const nextText = event.target.value
+            setTextValue(nextText)
+
+            if (nextText.trim() === '') {
+              return
+            }
+
+            const parsed = Number(nextText)
+            if (Number.isFinite(parsed) && parsed >= 0) {
+              onChange(parsed)
+            }
+          }}
           className="input-field pr-14 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
         />
         {suffix ? (
@@ -142,21 +168,25 @@ export function SettingsPage() {
     updateGoals,
     updateProfile,
     updateUnits,
+    updateBackupReminder,
   } = useAppStore()
 
   const [profile, setProfile] = useState<Profile>(settings.profile)
   const [goals, setGoals] = useState<GoalSettings>(settings.goals)
   const [units, setUnits] = useState<UnitSettings>(settings.units)
+  const [backupReminder, setBackupReminder] = useState<AppSettingsRecord['backupReminder']>(settings.backupReminder)
   const [isImporting, setIsImporting] = useState(false)
   const importInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => setProfile(settings.profile), [settings.profile])
   useEffect(() => setGoals(settings.goals), [settings.goals])
   useEffect(() => setUnits(settings.units), [settings.units])
+  useEffect(() => setBackupReminder(settings.backupReminder), [settings.backupReminder])
 
   const profileStatus = useAutosaveDraft(profile, settings.profile, updateProfile)
   const goalsStatus = useAutosaveDraft(goals, settings.goals, updateGoals)
   const unitsStatus = useAutosaveDraft(units, settings.units, updateUnits)
+  const backupStatus = useAutosaveDraft(backupReminder, settings.backupReminder, updateBackupReminder)
 
   const previewSettings = useMemo<AppSettingsRecord>(
     () => ({
@@ -164,8 +194,9 @@ export function SettingsPage() {
       profile,
       goals,
       units,
+      backupReminder,
     }),
-    [goals, profile, settings, units],
+    [backupReminder, goals, profile, settings, units],
   )
 
   const resolvedGoals = useMemo(() => resolveGoals(previewSettings), [previewSettings])
@@ -671,15 +702,43 @@ export function SettingsPage() {
       </Card>
 
       <Card className="space-y-4 p-4">
-        <div className="flex items-start gap-3">
-          <div className="rounded-2xl bg-slate-100 p-3 text-slate-700">
-            <Download className="h-5 w-5" />
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3">
+            <div className="rounded-2xl bg-slate-100 p-3 text-slate-700">
+              <Download className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="text-base font-semibold text-slate-950">Backup & restore</p>
+              <p className="text-sm text-slate-500">
+                Export everything to JSON or restore it later on the same browser or a new device.
+              </p>
+            </div>
           </div>
-          <div>
-            <p className="text-base font-semibold text-slate-950">Backup & restore</p>
-            <p className="text-sm text-slate-500">
-              Export everything to JSON or restore it later on the same browser or a new device.
-            </p>
+          <AutosaveBadge status={backupStatus} />
+        </div>
+
+        <div className="grid gap-4 sm:grid-cols-2">
+          <label>
+            <span className="mb-2 block text-sm font-medium text-slate-700">Backup reminders</span>
+            <select
+              value={backupReminder}
+              onChange={(event) => setBackupReminder(event.target.value as AppSettingsRecord['backupReminder'])}
+              className="input-field"
+            >
+              <option value="off">Off</option>
+              <option value="daily">Every day</option>
+              <option value="weekly">Every 7 days</option>
+              <option value="monthly">Every 30 days</option>
+            </select>
+          </label>
+          <div className="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-slate-600 ring-1 ring-slate-200">
+            {backupReminder === 'off'
+              ? 'Backup reminders are disabled.'
+              : backupReminder === 'daily'
+              ? 'You will be reminded to back up data every day.'
+              : backupReminder === 'weekly'
+              ? 'You will be reminded to back up data every 7 days.'
+              : 'You will be reminded to back up data every 30 days.'}
           </div>
         </div>
 
