@@ -19,7 +19,7 @@ interface NavItem {
 const items: NavItem[] = [
   { to: '/', label: 'Home', icon: House },
   { to: '/search', label: 'Search', icon: Search },
-  { to: '/scan', label: 'Scan', icon: ScanLine, emphasized: true },
+  { to: '/scan', label: 'Scan', icon: ScanLine },
   { to: '/saved', label: 'Saved', icon: Heart },
   { to: '/settings', label: 'Settings', icon: Settings },
 ]
