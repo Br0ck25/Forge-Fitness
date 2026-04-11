@@ -1,6 +1,6 @@
 # Forge Fitness
 
-Forge Fitness is a mobile-first calorie tracking Progressive Web App built with Vite, React, TypeScript, Tailwind CSS, React Router, IndexedDB, and `vite-plugin-pwa`.
+Forge Fitness is a mobile-first calorie tracking Progressive Web App built with Vite, React, TypeScript, Tailwind CSS, React Router, local browser storage, and `vite-plugin-pwa`.
 
 The app is designed for fast daily use:
 
@@ -9,7 +9,7 @@ The app is designed for fast daily use:
 - bottom navigation on every screen
 - barcode scanning with Open Food Facts
 - favorites and reusable custom meals
-- offline-first local persistence with IndexedDB
+- offline-first local persistence with local browser storage
 - installable PWA with service worker caching
 
 ## Tech stack
@@ -18,7 +18,7 @@ The app is designed for fast daily use:
 - React 19 + TypeScript
 - Tailwind CSS 4
 - React Router
-- Dexie + IndexedDB
+- localStorage
 - `vite-plugin-pwa`
 - `@zxing/browser` for barcode scanning
 - Open Food Facts API for product search and barcode lookup
@@ -60,7 +60,7 @@ The app is designed for fast daily use:
 
 - installable on supported mobile browsers
 - app shell cached via service worker
-- local persistence via IndexedDB
+- local persistence via local browser storage
 - works offline for:
   - viewing logs
   - viewing favorites and meals
@@ -137,7 +137,7 @@ npm run lint
 
 ## Data storage
 
-The app stores all user data locally in IndexedDB:
+The app stores all user data locally in browser storage (`localStorage`):
 
 - settings
 - optional profile

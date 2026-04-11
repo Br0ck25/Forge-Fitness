@@ -3,8 +3,51 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
+const nutritionFields = [
+  'code',
+  'product_name',
+  'product_name_en',
+  'brands',
+  'serving_size',
+  'nutriments',
+  'image_front_small_url',
+  'image_front_url',
+].join(',')
+
 // https://vite.dev/config/
 export default defineConfig({
+  server: {
+    proxy: {
+      '/api/search': {
+        target: 'https://search.openfoodfacts.org',
+        changeOrigin: true,
+        rewrite: (path) => {
+          const url = new URL(path, 'http://127.0.0.1')
+          const params = new URLSearchParams({
+            q: url.searchParams.get('q') ?? '',
+            page_size: '24',
+            langs: 'en',
+            fields: nutritionFields,
+          })
+
+          return `/search?${params.toString()}`
+        },
+      },
+      '/api/barcode': {
+        target: 'https://world.openfoodfacts.org',
+        changeOrigin: true,
+        rewrite: (path) => {
+          const url = new URL(path, 'http://127.0.0.1')
+          const barcode = url.pathname.split('/').filter(Boolean).pop() ?? ''
+          const params = new URLSearchParams({
+            fields: nutritionFields,
+          })
+
+          return `/api/v2/product/${barcode}.json?${params.toString()}`
+        },
+      },
+    },
+  },
   plugins: [
     react(),
     tailwindcss(),
@@ -32,11 +75,11 @@ export default defineConfig({
       },
       workbox: {
         cleanupOutdatedCaches: true,
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,webmanifest}'],
+        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
         navigateFallback: 'index.html',
         runtimeCaching: [
           {
-            urlPattern: /^https:\/\/world\.openfoodfacts\.org\/api\/v2\/product\/.*$/i,
+            urlPattern: /\/api\/barcode\/.*/i,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'openfoodfacts-product-cache',
@@ -51,7 +94,7 @@ export default defineConfig({
             },
           },
           {
-            urlPattern: /^https:\/\/world\.openfoodfacts\.org\/cgi\/search\.pl.*$/i,
+            urlPattern: /\/api\/search.*/i,
             handler: 'NetworkFirst',
             options: {
               cacheName: 'openfoodfacts-search-cache',

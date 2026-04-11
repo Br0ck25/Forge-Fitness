@@ -325,7 +325,7 @@ export function SettingsPage() {
         </div>
 
         <ul className="space-y-2 text-sm text-slate-600">
-          <li>• Storage: IndexedDB</li>
+          <li>• Storage: local browser storage (`localStorage`)</li>
           <li>• Offline: view logs and add manual entries</li>
           <li>• Installable: yes, from supported mobile browsers</li>
           <li>• Food data: Open Food Facts search + barcode lookup</li>

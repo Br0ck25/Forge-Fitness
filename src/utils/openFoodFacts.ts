@@ -1,12 +1,12 @@
 import type { FoodDraft } from '../types/domain'
 
-const OPEN_FOOD_FACTS_BASE = 'https://world.openfoodfacts.org'
+const API_BASE = '/api'
 
 interface OpenFoodFactsProduct {
   code?: string
   product_name?: string
   product_name_en?: string
-  brands?: string
+  brands?: string | string[]
   serving_size?: string
   nutriments?: Record<string, unknown>
   image_front_small_url?: string
@@ -14,7 +14,7 @@ interface OpenFoodFactsProduct {
 }
 
 interface SearchResponse {
-  products?: OpenFoodFactsProduct[]
+  hits?: OpenFoodFactsProduct[]
 }
 
 interface BarcodeResponse {
@@ -39,6 +39,14 @@ function createServingLabel(product: OpenFoodFactsProduct, usingServingMetrics: 
   }
 
   return usingServingMetrics ? '1 serving' : '100 g'
+}
+
+function parseBrand(brands?: string | string[]) {
+  if (Array.isArray(brands)) {
+    return brands[0]?.trim()
+  }
+
+  return brands?.split(',')[0]?.trim()
 }
 
 function parseProduct(product: OpenFoodFactsProduct): FoodDraft {
@@ -86,7 +94,7 @@ function parseProduct(product: OpenFoodFactsProduct): FoodDraft {
 
   return {
     name: product.product_name?.trim() || product.product_name_en?.trim() || 'Unknown product',
-    brand: product.brands?.split(',')[0]?.trim(),
+    brand: parseBrand(product.brands),
     servingSize: createServingLabel(product, usingServingMetrics),
     calories,
     protein: Math.round(protein * 10) / 10,
@@ -103,7 +111,12 @@ function parseProduct(product: OpenFoodFactsProduct): FoodDraft {
 }
 
 async function getJson<T>(url: string) {
-  const response = await fetch(url)
+  const response = await fetch(url, {
+    headers: {
+      Accept: 'application/json',
+    },
+  })
+
   if (!response.ok) {
     throw new Error('Open Food Facts is unavailable right now.')
   }
@@ -117,10 +130,10 @@ export async function searchFoods(query: string) {
     return []
   }
 
-  const url = `${OPEN_FOOD_FACTS_BASE}/cgi/search.pl?search_terms=${encodeURIComponent(cleanQuery)}&search_simple=1&action=process&json=1&page_size=24`
+  const url = `${API_BASE}/search?q=${encodeURIComponent(cleanQuery)}`
   const data = await getJson<SearchResponse>(url)
 
-  return (data.products ?? [])
+  return (data.hits ?? [])
     .map(parseProduct)
     .filter((food) => food.name.trim().length > 0)
 }
@@ -131,7 +144,7 @@ export async function lookupBarcode(barcode: string) {
     return undefined
   }
 
-  const url = `${OPEN_FOOD_FACTS_BASE}/api/v2/product/${encodeURIComponent(cleanBarcode)}.json?fields=code,product_name,product_name_en,brands,serving_size,nutriments,image_front_small_url,image_front_url`
+  const url = `${API_BASE}/barcode/${encodeURIComponent(cleanBarcode)}`
   const data = await getJson<BarcodeResponse>(url)
 
   if (data.status !== 1 || !data.product) {

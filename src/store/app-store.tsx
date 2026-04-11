@@ -1,6 +1,5 @@
 /* eslint-disable react-refresh/only-export-components */
 
-import { useLiveQuery } from 'dexie-react-hooks'
 import {
   createContext,
   type PropsWithChildren,
@@ -24,39 +23,18 @@ import type {
 import { toDateKey } from '../utils/date'
 import { createId } from '../utils/id'
 import { calculateCustomMealTotals } from '../utils/nutrition'
-import { SETTINGS_ID, db } from './db'
+import {
+  clearPersistedAppState,
+  createDefaultPersistedState,
+  defaultSettings,
+  loadPersistedAppState,
+  savePersistedAppState,
+  SETTINGS_ID,
+  subscribePersistedAppState,
+  type PersistedAppState,
+} from './local-storage'
 
 const FIRST_VISIT_KEY = 'forge-fitness:first-visit-complete'
-
-const defaultSettings = (): AppSettingsRecord => ({
-  id: SETTINGS_ID,
-  profile: {},
-  goals: {
-    calorieMode: 'auto',
-    calorieGoal: 2000,
-    proteinGoal: 150,
-    carbsGoal: 200,
-    fatGoal: 65,
-    goalAdjustment: 'maintain',
-  },
-  units: {
-    weight: 'kg',
-    height: 'cm',
-  },
-  preferredMeal: 'snacks',
-  updatedAt: Date.now(),
-})
-
-async function ensureSettings() {
-  const existing = await db.settings.get(SETTINGS_ID)
-  if (existing) {
-    return existing
-  }
-
-  const seeded = defaultSettings()
-  await db.settings.put(seeded)
-  return seeded
-}
 
 interface AddLogEntryInput {
   date?: string
@@ -106,8 +84,29 @@ interface AppStoreValue {
 
 const AppStoreContext = createContext<AppStoreValue | undefined>(undefined)
 
+function upsertByUpdatedAt<T extends { id: string; updatedAt: number }>(items: T[], nextItem: T) {
+  return [nextItem, ...items.filter((item) => item.id !== nextItem.id)].sort(
+    (left, right) => right.updatedAt - left.updatedAt,
+  )
+}
+
+function updatePreferredMealInState(state: PersistedAppState, meal: MealKey) {
+  return {
+    ...state,
+    settings: {
+      ...state.settings,
+      id: SETTINGS_ID,
+      preferredMeal: meal,
+      updatedAt: Date.now(),
+    },
+  }
+}
+
 export function AppStoreProvider({ children }: PropsWithChildren) {
   const [selectedDate, setSelectedDate] = useState(toDateKey())
+  const [persistedState, setPersistedState] = useState<PersistedAppState>(() =>
+    loadPersistedAppState(),
+  )
   const [isFirstVisitOpen, setIsFirstVisitOpen] = useState(() => {
     try {
       return localStorage.getItem(FIRST_VISIT_KEY) !== 'true'
@@ -117,41 +116,33 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   })
 
   useEffect(() => {
-    void ensureSettings()
+    savePersistedAppState(persistedState)
+  }, [persistedState])
+
+  useEffect(() => {
+    return subscribePersistedAppState(() => {
+      setPersistedState(loadPersistedAppState())
+    })
   }, [])
 
-  const settingsRecord = useLiveQuery(
-    () => db.settings.get(SETTINGS_ID),
-    [],
-    defaultSettings(),
-  )
-  const favorites = useLiveQuery(
-    () => db.favorites.orderBy('updatedAt').reverse().toArray(),
-    [],
-    [],
-  )
-  const customMeals = useLiveQuery(
-    () => db.customMeals.orderBy('updatedAt').reverse().toArray(),
-    [],
-    [],
-  )
-  const logEntries = useLiveQuery(
-    () => db.logEntries.orderBy('updatedAt').reverse().toArray(),
-    [],
-    [],
-  )
-
   const mutateSettings = useCallback(
-    async (mutator: (current: AppSettingsRecord) => AppSettingsRecord) => {
-      const current = await ensureSettings()
-      const next = mutator(current)
-      const record: AppSettingsRecord = {
-        ...next,
-        id: SETTINGS_ID,
-        updatedAt: Date.now(),
-      }
-      await db.settings.put(record)
-      return record
+    async (mutator: (current: PersistedAppState['settings']) => PersistedAppState['settings']) => {
+      let nextSettings = defaultSettings()
+
+      setPersistedState((current) => {
+        nextSettings = {
+          ...mutator(current.settings),
+          id: SETTINGS_ID,
+          updatedAt: Date.now(),
+        }
+
+        return {
+          ...current,
+          settings: nextSettings,
+        }
+      })
+
+      return nextSettings
     },
     [],
   )
@@ -206,46 +197,65 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       favoriteId,
       mealId,
     }: AddLogEntryInput) => {
-      const now = Date.now()
-      const entry: LogEntry = {
-        id: createId('log'),
-        date,
-        meal,
-        quantity,
-        item: food,
-        sourceType,
-        favoriteId,
-        mealId,
-        createdAt: now,
-        updatedAt: now,
-      }
+      let entry!: LogEntry
 
-      await db.logEntries.put(entry)
-      await updatePreferredMeal(meal)
+      setPersistedState((current) => {
+        const now = Date.now()
+        entry = {
+          id: createId('log'),
+          date,
+          meal,
+          quantity,
+          item: food,
+          sourceType,
+          favoriteId,
+          mealId,
+          createdAt: now,
+          updatedAt: now,
+        }
+
+        return updatePreferredMealInState(
+          {
+            ...current,
+            logEntries: upsertByUpdatedAt(current.logEntries, entry),
+          },
+          meal,
+        )
+      })
+
       return entry
     },
-    [updatePreferredMeal],
+    [],
   )
 
-  const updateLogEntry = useCallback(async (
-    id: string,
-    updates: Partial<Pick<LogEntry, 'meal' | 'quantity' | 'item'>>,
-  ) => {
-    const existing = await db.logEntries.get(id)
-    if (!existing) {
-      return
-    }
+  const updateLogEntry = useCallback(
+    async (
+      id: string,
+      updates: Partial<Pick<LogEntry, 'meal' | 'quantity' | 'item'>>,
+    ) => {
+      setPersistedState((current) => {
+        const existing = current.logEntries.find((entry) => entry.id === id)
+        if (!existing) {
+          return current
+        }
 
-    const nextMeal = updates.meal ?? existing.meal
+        const nextEntry: LogEntry = {
+          ...existing,
+          ...updates,
+          updatedAt: Date.now(),
+        }
 
-    await db.logEntries.put({
-      ...existing,
-      ...updates,
-      updatedAt: Date.now(),
-    })
-
-    await updatePreferredMeal(nextMeal)
-  }, [updatePreferredMeal])
+        return updatePreferredMealInState(
+          {
+            ...current,
+            logEntries: upsertByUpdatedAt(current.logEntries, nextEntry),
+          },
+          nextEntry.meal,
+        )
+      })
+    },
+    [],
+  )
 
   const moveLogEntry = useCallback(
     async (id: string, meal: MealKey) => {
@@ -255,74 +265,101 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   )
 
   const deleteLogEntry = useCallback(async (id: string) => {
-    await db.logEntries.delete(id)
+    setPersistedState((current) => ({
+      ...current,
+      logEntries: current.logEntries.filter((entry) => entry.id !== id),
+    }))
   }, [])
 
-  const saveFavorite = useCallback(async (
-    food: FoodDraft,
-    options?: { id?: string; custom?: boolean },
-  ) => {
-    const now = Date.now()
-    const favorite: FavoriteFood = {
-      ...food,
-      id: options?.id ?? createId('fav'),
-      custom: options?.custom ?? food.source === 'manual',
-      createdAt: now,
-      updatedAt: now,
-      source: 'favorite',
-    }
+  const saveFavorite = useCallback(
+    async (food: FoodDraft, options?: { id?: string; custom?: boolean }) => {
+      let favorite!: FavoriteFood
 
-    const existing = options?.id ? await db.favorites.get(options.id) : undefined
+      setPersistedState((current) => {
+        const existing = options?.id
+          ? current.favorites.find((item) => item.id === options.id)
+          : undefined
+        const now = Date.now()
 
-    await db.favorites.put({
-      ...favorite,
-      createdAt: existing?.createdAt ?? favorite.createdAt,
-    })
+        favorite = {
+          ...food,
+          id: options?.id ?? createId('fav'),
+          custom: options?.custom ?? food.source === 'manual',
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+          source: 'favorite',
+        }
 
-    return favorite
-  }, [])
+        return {
+          ...current,
+          favorites: upsertByUpdatedAt(current.favorites, favorite),
+        }
+      })
+
+      return favorite
+    },
+    [],
+  )
 
   const deleteFavorite = useCallback(async (id: string) => {
-    await db.favorites.delete(id)
+    setPersistedState((current) => ({
+      ...current,
+      favorites: current.favorites.filter((favorite) => favorite.id !== id),
+    }))
   }, [])
 
-  const saveCustomMeal = useCallback(async (meal: SaveCustomMealInput) => {
-    const now = Date.now()
-    const existing = meal.id ? await db.customMeals.get(meal.id) : undefined
-    const totals = calculateCustomMealTotals(meal.items)
-    const record: CustomMeal = {
-      id: meal.id ?? createId('meal'),
-      name: meal.name,
-      items: meal.items,
-      totals,
-      servingSize: meal.servingSize?.trim() || '1 meal',
-      createdAt: existing?.createdAt ?? now,
-      updatedAt: now,
-    }
+  const saveCustomMeal = useCallback(
+    async (meal: SaveCustomMealInput) => {
+      let record!: CustomMeal
 
-    await db.customMeals.put(record)
-    return record
-  }, [])
+      setPersistedState((current) => {
+        const existing = meal.id
+          ? current.customMeals.find((item) => item.id === meal.id)
+          : undefined
+        const now = Date.now()
+        const totals = calculateCustomMealTotals(meal.items)
+
+        record = {
+          id: meal.id ?? createId('meal'),
+          name: meal.name,
+          items: meal.items,
+          totals,
+          servingSize: meal.servingSize?.trim() || '1 meal',
+          createdAt: existing?.createdAt ?? now,
+          updatedAt: now,
+        }
+
+        return {
+          ...current,
+          customMeals: upsertByUpdatedAt(current.customMeals, record),
+        }
+      })
+
+      return record
+    },
+    [],
+  )
 
   const deleteCustomMeal = useCallback(async (id: string) => {
-    await db.customMeals.delete(id)
+    setPersistedState((current) => ({
+      ...current,
+      customMeals: current.customMeals.filter((meal) => meal.id !== id),
+    }))
   }, [])
 
   const quickAddFavorite = useCallback(async (favorite: FavoriteFood) => {
-    const currentSettings = settingsRecord ?? (await ensureSettings())
     await addLogEntry({
-      meal: currentSettings.preferredMeal,
+      meal: persistedState.settings.preferredMeal,
       food: favorite,
       quantity: 1,
       sourceType: 'favorite',
       favoriteId: favorite.id,
     })
-  }, [addLogEntry, settingsRecord])
+  }, [addLogEntry, persistedState.settings.preferredMeal])
 
   const quickAddMeal = useCallback(async (meal: CustomMeal) => {
-    const currentSettings = settingsRecord ?? (await ensureSettings())
     await addLogEntry({
-      meal: currentSettings.preferredMeal,
+      meal: persistedState.settings.preferredMeal,
       food: {
         ...meal.totals,
         name: meal.name,
@@ -334,7 +371,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
       sourceType: 'meal',
       mealId: meal.id,
     })
-  }, [addLogEntry, settingsRecord])
+  }, [addLogEntry, persistedState.settings.preferredMeal])
 
   const openFirstVisitModal = useCallback(() => {
     setIsFirstVisitOpen(true)
@@ -364,14 +401,8 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   }, [updateProfile])
 
   const resetAllData = useCallback(async () => {
-    await Promise.all([
-      db.logEntries.clear(),
-      db.customMeals.clear(),
-      db.favorites.clear(),
-      db.settings.clear(),
-    ])
-
-    await db.settings.put(defaultSettings())
+    clearPersistedAppState()
+    setPersistedState(createDefaultPersistedState())
 
     try {
       localStorage.removeItem(FIRST_VISIT_KEY)
@@ -385,10 +416,10 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
 
   const value = useMemo<AppStoreValue>(() => ({
     isReady: true,
-    settings: settingsRecord ?? defaultSettings(),
-    favorites: favorites ?? [],
-    customMeals: customMeals ?? [],
-    logEntries: logEntries ?? [],
+    settings: persistedState.settings,
+    favorites: persistedState.favorites,
+    customMeals: persistedState.customMeals,
+    logEntries: persistedState.logEntries,
     selectedDate,
     setSelectedDate,
     isFirstVisitOpen,
@@ -413,23 +444,20 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
   }), [
     addLogEntry,
     completeFirstVisit,
-    customMeals,
     deleteCustomMeal,
     deleteFavorite,
     deleteLogEntry,
     dismissFirstVisitModal,
-    favorites,
     isFirstVisitOpen,
-    logEntries,
     moveLogEntry,
     openFirstVisitModal,
+    persistedState,
     quickAddFavorite,
     quickAddMeal,
     resetAllData,
     saveCustomMeal,
     saveFavorite,
     selectedDate,
-    settingsRecord,
     updateGoals,
     updateLogEntry,
     updateProfile,
