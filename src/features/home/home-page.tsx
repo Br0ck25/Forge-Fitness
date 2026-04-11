@@ -5,6 +5,7 @@ import {
   PencilLine,
   Plus,
   ScanLine,
+  Scale,
   Search,
   UtensilsCrossed,
 } from 'lucide-react'
@@ -17,11 +18,12 @@ import { Card } from '../../components/ui/card'
 import { EmptyState } from '../../components/ui/empty-state'
 import { Modal } from '../../components/ui/modal'
 import { useAppStore } from '../../store/app-store'
-import type { FoodDraft, LogEntry, MealKey } from '../../types/domain'
+import type { FoodDraft, LogEntry, MealKey, WeightEntry } from '../../types/domain'
 import { MEAL_ORDER, mealLabels } from '../../types/domain'
 import { calculateDailySummary, resolveGoals } from '../../utils/calculations'
 import { formatDate, isToday, shiftDateKey, toDateKey } from '../../utils/date'
 import { createBlankFood } from '../../utils/defaults'
+import { formatWeight, kgToLb, lbToKg } from '../../utils/units'
 
 interface EditorState {
   mode: 'add' | 'edit'
@@ -34,6 +36,11 @@ interface EditorState {
 interface QuickLogState {
   meal: MealKey
   view: 'menu' | 'favorites' | 'meals'
+}
+
+interface WeightEditorState {
+  entry?: WeightEntry
+  weight: number
 }
 
 function QuickShortcut({
@@ -91,6 +98,7 @@ export function HomePage() {
     addLogEntry,
     customMeals,
     deleteLogEntry,
+    deleteWeightEntry,
     favorites,
     logEntries,
     notify,
@@ -100,9 +108,18 @@ export function HomePage() {
     settings,
     updateLogEntry,
     moveLogEntry,
+    addWeightEntry,
+    updateWeightEntry,
+    weightEntries,
   } = useAppStore()
   const [editorState, setEditorState] = useState<EditorState | null>(null)
   const [quickLogState, setQuickLogState] = useState<QuickLogState | null>(null)
+  const [weightEditorState, setWeightEditorState] = useState<WeightEditorState | null>(null)
+
+  const selectedWeightEntry = useMemo(
+    () => weightEntries.find((entry) => entry.date === selectedDate),
+    [weightEntries, selectedDate],
+  )
 
   const dailyEntries = useMemo(
     () => logEntries.filter((entry) => entry.date === selectedDate),
@@ -130,6 +147,54 @@ export function HomePage() {
 
   function closeQuickLog() {
     setQuickLogState(null)
+  }
+
+  function openWeightEntry(entry?: WeightEntry) {
+    const currentWeightKg = entry?.weightKg ?? settings.profile.weightKg ?? 0
+    const initialWeight = settings.units.weight === 'lb'
+      ? Math.round(kgToLb(currentWeightKg) * 10) / 10
+      : Math.round(currentWeightKg * 10) / 10
+
+    setQuickLogState(null)
+    setWeightEditorState({ entry, weight: initialWeight })
+  }
+
+  async function handleSubmitWeight() {
+    if (!weightEditorState) {
+      return
+    }
+
+    const enteredWeight = weightEditorState.weight
+    if (!(enteredWeight > 0)) {
+      return
+    }
+
+    const weightKg = settings.units.weight === 'lb' ? lbToKg(enteredWeight) : enteredWeight
+
+    if (weightEditorState.entry) {
+      await updateWeightEntry(weightEditorState.entry.id, { weightKg })
+      notify({
+        title: 'Weight updated',
+        description: `${formatWeight(weightKg, settings.units.weight)} saved for ${formatDate(selectedDate)}.`,
+      })
+    } else {
+      await addWeightEntry({ date: selectedDate, weightKg })
+      notify({
+        title: 'Weight logged',
+        description: `${formatWeight(weightKg, settings.units.weight)} added for ${formatDate(selectedDate)}.`,
+      })
+    }
+
+    setWeightEditorState(null)
+  }
+
+  async function handleDeleteWeightEntry(id: string) {
+    await deleteWeightEntry(id)
+    notify({
+      title: 'Weight removed',
+      description: `Daily weight entry deleted for ${formatDate(selectedDate)}.`,
+      tone: 'info',
+    })
   }
 
   function openSearchForMeal(meal: MealKey) {
@@ -389,6 +454,12 @@ export function HomePage() {
           onClick={() => openQuickLog(settings.preferredMeal, 'favorites')}
         />
         <QuickShortcut
+          icon={Scale}
+          label="Weight"
+          subtitle="Daily progress"
+          onClick={() => openWeightEntry(selectedWeightEntry)}
+        />
+        <QuickShortcut
           icon={UtensilsCrossed}
           label="Meals"
           subtitle="Reuse combos"
@@ -458,6 +529,56 @@ export function HomePage() {
           </div>
         </Card>
       ) : null}
+
+      <Card className="space-y-4 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-base font-semibold text-slate-950">Weight</p>
+            <p className="text-sm text-slate-500">Record your daily weight for progress tracking.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => openWeightEntry(selectedWeightEntry)}
+            className="button-secondary text-sm"
+          >
+            {selectedWeightEntry ? 'Update weight' : 'Log weight'}
+          </button>
+        </div>
+
+        {selectedWeightEntry ? (
+          <div className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <p className="text-3xl font-semibold text-slate-950">
+                  {formatWeight(selectedWeightEntry.weightKg, settings.units.weight)}
+                </p>
+                <p className="mt-1 text-sm text-slate-500">Logged for {formatDate(selectedDate)}.</p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openWeightEntry(selectedWeightEntry)}
+                  className="inline-flex items-center justify-center rounded-full border border-slate-200 px-3 py-2 text-xs font-medium text-slate-700 transition hover:border-emerald-200 hover:text-emerald-700"
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDeleteWeightEntry(selectedWeightEntry.id)}
+                  className="inline-flex items-center justify-center rounded-full border border-slate-200 px-3 py-2 text-xs font-medium text-rose-600 transition hover:border-rose-200"
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <EmptyState
+            title="No weight logged today"
+            description="Add your daily weight to track progress."
+          />
+        )}
+      </Card>
 
       <div className="space-y-4">
         {MEAL_ORDER.map((meal) => (
@@ -531,10 +652,52 @@ export function HomePage() {
               <Heart className="h-5 w-5" />
               Choose favorite
             </button>
+            <button type="button" onClick={() => { closeQuickLog(); openWeightEntry(selectedWeightEntry) }} className="button-secondary min-h-24 flex-col text-center">
+              <Scale className="h-5 w-5" />
+              Log weight
+            </button>
             <button type="button" onClick={() => openQuickLog(quickLogState.meal, 'meals')} className="button-secondary col-span-2 min-h-24 flex-col text-center">
               <UtensilsCrossed className="h-5 w-5" />
               Choose meal
             </button>
+          </div>
+        </Modal>
+      ) : null}
+
+      {weightEditorState ? (
+        <Modal
+          open={Boolean(weightEditorState)}
+          title={weightEditorState.entry ? 'Update weight' : 'Log weight'}
+          onClose={() => setWeightEditorState(null)}
+          footer={
+            <div className="flex gap-3">
+              <button type="button" onClick={() => setWeightEditorState(null)} className="button-secondary flex-1 justify-center">
+                Cancel
+              </button>
+              <button type="button" onClick={handleSubmitWeight} className="button-primary flex-1 justify-center">
+                Save weight
+              </button>
+            </div>
+          }
+        >
+          <p className="text-sm text-slate-500">
+            Enter your weight for {formatDate(selectedDate)}.
+          </p>
+          <div className="space-y-4 rounded-3xl border border-slate-200 bg-slate-50 p-4">
+            <label className="block text-sm font-medium text-slate-700">
+              Weight ({settings.units.weight === 'lb' ? 'lb' : 'kg'})
+            </label>
+            <input
+              type="number"
+              min="0"
+              step="0.1"
+              value={weightEditorState.weight}
+              onChange={(event) => setWeightEditorState({
+                ...weightEditorState,
+                weight: Number(event.target.value),
+              })}
+              className="w-full rounded-3xl border border-slate-200 bg-white px-4 py-3 text-lg font-semibold text-slate-950 outline-none transition focus:border-emerald-500 focus:ring-2 focus:ring-emerald-200"
+            />
           </div>
         </Modal>
       ) : null}

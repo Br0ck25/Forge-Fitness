@@ -6,6 +6,7 @@ import type {
   FoodDraft,
   LogEntry,
   MealKey,
+  WeightEntry,
 } from '../types/domain'
 import { MEAL_ORDER } from '../types/domain'
 
@@ -17,6 +18,7 @@ export interface PersistedAppState {
   favorites: FavoriteFood[]
   customMeals: CustomMeal[]
   logEntries: LogEntry[]
+  weightEntries: WeightEntry[]
 }
 
 export function defaultSettings(): AppSettingsRecord {
@@ -47,6 +49,7 @@ export function createDefaultPersistedState(): PersistedAppState {
     favorites: [],
     customMeals: [],
     logEntries: [],
+    weightEntries: [],
   }
 }
 
@@ -61,6 +64,10 @@ function toNumber(value: unknown, fallback: number) {
 function toNonNegativeNumber(value: unknown, fallback: number) {
   const parsed = toNumber(value, fallback)
   return parsed >= 0 ? parsed : fallback
+}
+
+function toPositiveNumber(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
 function toRequiredText(value: unknown) {
@@ -271,6 +278,28 @@ function normalizeLogEntry(value: unknown) {
   } satisfies LogEntry
 }
 
+function normalizeWeightEntry(value: unknown) {
+  if (!isPlainObject(value)) {
+    return undefined
+  }
+
+  const id = toRequiredText(value.id)
+  const date = toRequiredText(value.date)
+  const weightKg = toPositiveNumber(value.weightKg)
+
+  if (!id || !date || typeof weightKg !== 'number') {
+    return undefined
+  }
+
+  return {
+    id,
+    date,
+    weightKg,
+    createdAt: toNumber(value.createdAt, Date.now()),
+    updatedAt: toNumber(value.updatedAt, Date.now()),
+  } satisfies WeightEntry
+}
+
 function normalizeCollection<T>(value: unknown, normalizer: (item: unknown) => T | undefined) {
   if (!Array.isArray(value)) {
     return []
@@ -292,6 +321,7 @@ export function normalizePersistedAppState(value: unknown): PersistedAppState {
     favorites: normalizeCollection(value.favorites, normalizeFavoriteFood),
     customMeals: normalizeCollection(value.customMeals, normalizeCustomMeal),
     logEntries: normalizeCollection(value.logEntries, normalizeLogEntry),
+    weightEntries: normalizeCollection(value.weightEntries, normalizeWeightEntry),
   }
 }
 

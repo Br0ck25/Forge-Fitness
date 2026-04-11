@@ -66,6 +66,14 @@ export interface LogEntry {
   updatedAt: number
 }
 
+export interface WeightEntry {
+  id: string
+  date: string
+  weightKg: number
+  createdAt: number
+  updatedAt: number
+}
+
 export interface Profile {
   age?: number
   sex?: Sex

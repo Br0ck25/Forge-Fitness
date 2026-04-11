@@ -21,6 +21,7 @@ import type {
   MealKey,
   Profile,
   UnitSettings,
+  WeightEntry,
 } from '../types/domain'
 import { toDateKey } from '../utils/date'
 import { createBackupFile, parseBackupFile, type AppBackupFile } from '../utils/backup'
@@ -60,6 +61,7 @@ interface AppStoreValue {
   favorites: FavoriteFood[]
   customMeals: CustomMeal[]
   logEntries: LogEntry[]
+  weightEntries: WeightEntry[]
   notices: AppNotice[]
   selectedDate: string
   setSelectedDate: (date: string) => void
@@ -84,6 +86,9 @@ interface AppStoreValue {
   updateLogEntry: (id: string, updates: Partial<Pick<LogEntry, 'meal' | 'quantity' | 'item'>>) => Promise<void>
   deleteLogEntry: (id: string) => Promise<void>
   moveLogEntry: (id: string, meal: MealKey) => Promise<void>
+  addWeightEntry: (input: { date?: string; weightKg: number }) => Promise<WeightEntry>
+  updateWeightEntry: (id: string, updates: Partial<Pick<WeightEntry, 'weightKg'>>) => Promise<void>
+  deleteWeightEntry: (id: string) => Promise<void>
   saveFavorite: (food: FoodDraft, options?: { id?: string; custom?: boolean }) => Promise<FavoriteFood>
   deleteFavorite: (id: string) => Promise<void>
   saveCustomMeal: (meal: SaveCustomMealInput) => Promise<CustomMeal>
@@ -405,6 +410,64 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     }))
   }, [])
 
+  const addWeightEntry = useCallback(
+    async ({ date = toDateKey(), weightKg }: { date?: string; weightKg: number }) => {
+      let entry!: WeightEntry
+
+      setPersistedState((current) => {
+        const now = Date.now()
+        entry = {
+          id: createId('weight'),
+          date,
+          weightKg,
+          createdAt: now,
+          updatedAt: now,
+        }
+
+        return {
+          ...current,
+          weightEntries: [
+            entry,
+            ...current.weightEntries.filter((record) => record.date !== date),
+          ],
+        }
+      })
+
+      return entry
+    },
+    [],
+  )
+
+  const updateWeightEntry = useCallback(
+    async (id: string, updates: Partial<Pick<WeightEntry, 'weightKg'>>) => {
+      setPersistedState((current) => {
+        const existing = current.weightEntries.find((entry) => entry.id === id)
+        if (!existing) {
+          return current
+        }
+
+        const nextEntry: WeightEntry = {
+          ...existing,
+          ...updates,
+          updatedAt: Date.now(),
+        }
+
+        return {
+          ...current,
+          weightEntries: upsertByUpdatedAt(current.weightEntries, nextEntry),
+        }
+      })
+    },
+    [],
+  )
+
+  const deleteWeightEntry = useCallback(async (id: string) => {
+    setPersistedState((current) => ({
+      ...current,
+      weightEntries: current.weightEntries.filter((entry) => entry.id !== id),
+    }))
+  }, [])
+
   const saveFavorite = useCallback(
     async (food: FoodDraft, options?: { id?: string; custom?: boolean }) => {
       let favorite!: FavoriteFood
@@ -567,6 +630,7 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     favorites: persistedState.favorites,
     customMeals: persistedState.customMeals,
     logEntries: persistedState.logEntries,
+    weightEntries: persistedState.weightEntries,
     notices,
     selectedDate,
     setSelectedDate,
@@ -586,6 +650,9 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     updateLogEntry,
     deleteLogEntry,
     moveLogEntry,
+    addWeightEntry,
+    updateWeightEntry,
+    deleteWeightEntry,
     saveFavorite,
     deleteFavorite,
     saveCustomMeal,
@@ -620,6 +687,9 @@ export function AppStoreProvider({ children }: PropsWithChildren) {
     updateProfile,
     updatePreferredMeal,
     updateUnits,
+    addWeightEntry,
+    updateWeightEntry,
+    deleteWeightEntry,
   ])
 
   return <AppStoreContext.Provider value={value}>{children}</AppStoreContext.Provider>
